@@ -618,6 +618,7 @@
     let gameState = null;
     let myGameStrokes = [];
     let myGameSubmitted = false;
+    const gameWriteDuration = 30000;
     const gamePhaseDuration = 60000;
     const maxGameStrokes = 800;
 
@@ -810,7 +811,7 @@
         gameId: createGameId(),
         hostId: myId,
         players,
-        deadline: Date.now() + gamePhaseDuration
+        deadline: Date.now() + gameWriteDuration
       };
       acceptGameStart({ ...startMessage, sender: myId });
       publishGameMessage(startMessage);
@@ -828,11 +829,13 @@
         hostId: message.hostId,
         players,
         phase: 'write',
+        phasePlayers: [...players],
         deadline: message.deadline,
         prompts: {},
         drawings: {},
         guesses: {},
-        assignments: {}
+        assignments: {},
+        drawingSources: {}
       };
       myGameStrokes = [];
       myGameSubmitted = false;
@@ -856,7 +859,7 @@
     }
 
     function recordGameAnswer(message) {
-      if (!gameState || message.gameId !== gameState.gameId || !gameState.players.includes(message.sender)) return;
+      if (!gameState || message.gameId !== gameState.gameId || !gameState.phasePlayers.includes(message.sender)) return;
       if (message.kind === 'prompt' && gameState.phase === 'write') {
         if (typeof message.text === 'string') gameState.prompts[message.sender] = message.text.trim().slice(0, 160);
       } else if (message.kind === 'drawing' && gameState.phase === 'draw') {
@@ -876,7 +879,7 @@
         : gameState.phase === 'draw' ? gameState.drawings
         : gameState.phase === 'guess' ? gameState.guesses
         : null;
-      if (answers && gameState.players.every(id => Object.prototype.hasOwnProperty.call(answers, id))) {
+      if (answers && gameState.phasePlayers.every(id => Object.prototype.hasOwnProperty.call(answers, id))) {
         advanceGamePhase();
       }
     }
@@ -887,24 +890,31 @@
       let phaseMessage;
 
       if (gameState.phase === 'write') {
-        players.forEach(id => { if (!gameState.prompts[id]) gameState.prompts[id] = '(Không kịp gửi câu)'; });
+        const promptOwners = players.filter(id => typeof gameState.prompts[id] === 'string' && gameState.prompts[id].trim());
+        if (promptOwners.length === 0) {
+          const reason = 'Không ai gửi câu trong 30 giây. Ván đã kết thúc, bảng vẽ đã mở lại.';
+          publishGameMessage({ type: 'game_cancel', gameId, reason });
+          resetGame(reason);
+          return;
+        }
         const assignments = {};
-        players.forEach((drawer, index) => {
-          const promptOwner = players[(index + players.length - 1) % players.length];
+        promptOwners.forEach(promptOwner => {
+          const promptIndex = players.indexOf(promptOwner);
+          const drawer = players[(promptIndex + 1) % players.length];
           assignments[drawer] = { sourcePlayer: promptOwner, text: gameState.prompts[promptOwner] };
         });
         phaseMessage = { phase: 'draw', assignments, prompts: gameState.prompts };
       } else if (gameState.phase === 'draw') {
-        players.forEach(id => { if (!gameState.drawings[id]) gameState.drawings[id] = []; });
         const assignments = {};
-        players.forEach((guesser, index) => {
-          const drawer = players[(index + players.length - 1) % players.length];
+        Object.keys(gameState.drawingSources).forEach(drawer => {
+          const drawerIndex = players.indexOf(drawer);
+          const guesser = players[(drawerIndex + 1) % players.length];
           assignments[guesser] = drawer;
         });
-        phaseMessage = { phase: 'guess', assignments, prompts: gameState.prompts, drawings: gameState.drawings };
+        phaseMessage = { phase: 'guess', assignments, prompts: gameState.prompts, drawings: gameState.drawings, drawingSources: gameState.drawingSources };
       } else if (gameState.phase === 'guess') {
-        players.forEach(id => { if (!gameState.guesses[id]) gameState.guesses[id] = '(Không kịp đoán)'; });
-        phaseMessage = { phase: 'reveal', prompts: gameState.prompts, drawings: gameState.drawings, guesses: gameState.guesses };
+        gameState.phasePlayers.forEach(id => { if (!gameState.guesses[id]) gameState.guesses[id] = '(Không kịp đoán)'; });
+        phaseMessage = { phase: 'reveal', prompts: gameState.prompts, drawings: gameState.drawings, guesses: gameState.guesses, drawingSources: gameState.drawingSources };
       } else {
         return;
       }
@@ -924,19 +934,25 @@
       gameState.phase = message.phase;
       gameState.deadline = message.deadline;
       gameState.assignments = message.assignments || {};
+      gameState.phasePlayers = ['draw', 'guess'].includes(message.phase) ? Object.keys(gameState.assignments) : [];
       if (message.prompts) gameState.prompts = message.prompts;
       if (message.drawings) gameState.drawings = message.drawings;
       if (message.guesses) gameState.guesses = message.guesses;
+      if (message.drawingSources) gameState.drawingSources = message.drawingSources;
       myGameSubmitted = false;
       document.getElementById('gameTextInput').value = '';
       painting = false;
 
       if (message.phase === 'draw') {
         myGameStrokes = [];
+        gameState.drawingSources = Object.fromEntries(Object.entries(gameState.assignments)
+          .map(([drawer, assignment]) => [drawer, assignment?.sourcePlayer])
+          .filter(([, sourcePlayer]) => Boolean(sourcePlayer)));
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       } else if (message.phase === 'guess') {
         const drawer = gameState.assignments[myId];
-        drawGameOnMainCanvas(gameState.drawings[drawer] || []);
+        if (drawer) drawGameOnMainCanvas(gameState.drawings[drawer] || []);
+        else ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
       renderGameUI(message.phase);
     }
@@ -989,11 +1005,13 @@
       const active = phase !== 'reveal';
       startButton.disabled = active;
       startButton.textContent = phase === 'reveal' ? 'Chơi ván mới' : 'Đang chơi...';
-      status.textContent = `Host: ${gameState.hostId} · ${gameState.players.length} người · 60 giây mỗi lượt`;
+      const phaseDurationLabel = phase === 'write' ? '30 giây viết câu' : phase === 'reveal' ? 'Ván đã hoàn tất' : '60 giây mỗi lượt';
+      status.textContent = `Host: ${gameState.hostId} · ${gameState.players.length} người · ${phaseDurationLabel}`;
       document.getElementById('gamePhase').textContent = ({ write: 'Viết câu', draw: 'Vẽ câu', guess: 'Đoán hình', reveal: 'Kết quả' })[phase] || phase;
       document.getElementById('gameTimer').textContent = phase === 'reveal' ? '✓' : `${Math.max(0, Math.ceil((gameState.deadline - Date.now()) / 1000))}s`;
-      textForm.hidden = !((phase === 'write' || phase === 'guess') && !myGameSubmitted);
-      drawingButton.hidden = !(phase === 'draw' && !myGameSubmitted);
+      const hasPhaseTask = phase === 'write' || gameState.phasePlayers.includes(myId);
+      textForm.hidden = !((phase === 'write' || phase === 'guess') && hasPhaseTask && !myGameSubmitted);
+      drawingButton.hidden = !(phase === 'draw' && gameState.phasePlayers.includes(myId) && !myGameSubmitted);
       results.hidden = phase !== 'reveal';
 
       if (phase === 'write') {
@@ -1001,9 +1019,13 @@
         document.getElementById('gameTextInput').placeholder = 'Viết câu mở đầu (tối đa 160 ký tự)';
       } else if (phase === 'draw') {
         const assignment = gameState.assignments[myId];
-        task.textContent = `Hãy vẽ câu của ${assignment?.sourcePlayer || 'người trước'}: “${assignment?.text || ''}” trên bảng bên phải, rồi bấm Gửi hình vẽ.`;
+        task.textContent = assignment
+          ? `Hãy vẽ câu của ${assignment.sourcePlayer}: “${assignment.text}” trên bảng bên phải, rồi bấm Gửi hình vẽ.`
+          : 'Lượt này bạn được bỏ qua vì không có câu mới để vẽ. Đang chờ người chơi khác.';
       } else if (phase === 'guess') {
-        task.textContent = 'Đoán hình đang hiện trên bảng bên phải.';
+        task.textContent = gameState.assignments[myId]
+          ? 'Đoán hình đang hiện trên bảng bên phải.'
+          : 'Lượt này bạn không có hình cần đoán. Đang chờ người chơi khác.';
         document.getElementById('gameTextInput').placeholder = 'Bạn nghĩ hình này là gì?';
       } else if (phase === 'reveal') {
         task.textContent = 'Xem câu ban đầu, hình vẽ và câu đoán của từng chuỗi.';
@@ -1014,6 +1036,7 @@
     function submitGameText(event) {
       event.preventDefault();
       if (!gameState || myGameSubmitted || !['write', 'guess'].includes(gameState.phase)) return;
+      if (gameState.phase === 'guess' && !gameState.phasePlayers.includes(myId)) return;
       if (!client.connected) {
         document.getElementById('gameStatus').textContent = 'Mất kết nối. Đang chờ kết nối lại trước khi gửi.';
         return;
@@ -1031,7 +1054,7 @@
     }
 
     function submitGameDrawing() {
-      if (!gameState || gameState.phase !== 'draw' || myGameSubmitted) return;
+      if (!gameState || gameState.phase !== 'draw' || !gameState.phasePlayers.includes(myId) || myGameSubmitted) return;
       if (!client.connected) {
         document.getElementById('gameStatus').textContent = 'Mất kết nối. Đang chờ kết nối lại trước khi gửi.';
         return;
@@ -1048,23 +1071,26 @@
     function renderGameResults(container) {
       container.replaceChildren();
       const players = gameState.players;
-      players.forEach((promptOwner, index) => {
-        const drawer = players[(index + 1) % players.length];
-        const guesser = players[(index + 2) % players.length];
-        const card = document.createElement('article');
-        card.className = 'game-result';
-        const prompt = document.createElement('p');
-        prompt.textContent = `💬 ${promptOwner} viết: “${gameState.prompts[promptOwner] || '(trống)'}”`;
-        const miniCanvas = document.createElement('canvas');
-        miniCanvas.width = 240;
-        miniCanvas.height = 144;
-        const drawing = document.createElement('p');
-        drawing.textContent = `🎨 ${drawer} vẽ:`;
-        const guess = document.createElement('p');
-        guess.textContent = `🤔 ${guesser} đoán: “${gameState.guesses[guesser] || '(trống)'}”`;
-        card.append(prompt, drawing, miniCanvas, guess);
-        container.appendChild(card);
-        drawGameOnMiniCanvas(miniCanvas, gameState.drawings[drawer] || []);
+      Object.keys(gameState.prompts).forEach(promptOwner => {
+        const drawers = players.filter(id => gameState.drawingSources[id] === promptOwner);
+        drawers.forEach(drawer => {
+          const drawerIndex = players.indexOf(drawer);
+          const guesser = players[(drawerIndex + 1) % players.length];
+          const card = document.createElement('article');
+          card.className = 'game-result';
+          const prompt = document.createElement('p');
+          prompt.textContent = `💬 ${promptOwner} viết: “${gameState.prompts[promptOwner]}”`;
+          const miniCanvas = document.createElement('canvas');
+          miniCanvas.width = 240;
+          miniCanvas.height = 144;
+          const drawing = document.createElement('p');
+          drawing.textContent = `🎨 ${drawer} vẽ:`;
+          const guess = document.createElement('p');
+          guess.textContent = `🤔 ${guesser} đoán: “${gameState.guesses[guesser] || '(trống)'}”`;
+          card.append(prompt, drawing, miniCanvas, guess);
+          container.appendChild(card);
+          drawGameOnMiniCanvas(miniCanvas, gameState.drawings[drawer] || []);
+        });
       });
     }
 
@@ -1081,6 +1107,8 @@
     function handleGameMessage(message) {
       if (message.type === 'game_start') {
         acceptGameStart(message);
+      } else if (message.type === 'game_cancel') {
+        if (gameState && message.gameId === gameState.gameId && message.sender === gameState.hostId) resetGame(message.reason || 'Ván đã kết thúc. Bảng vẽ đã mở lại.');
       } else if (message.type === 'game_answer') {
         recordGameAnswer(message);
       } else if (message.type === 'game_phase') {
@@ -1168,6 +1196,7 @@
     function startPosition(e) {
       e.preventDefault();
       if (gameState && !['draw', 'reveal'].includes(gameState.phase)) return;
+      if (gameState?.phase === 'draw' && !gameState.phasePlayers.includes(myId)) return;
       if (gameState?.phase === 'draw' && myGameSubmitted) return;
       painting = true;
       const pos = getCursorPos(e);
@@ -1259,6 +1288,9 @@
         }
       });
       if (changed) updateClientListUI();
+      if (gameState && gameState.phase !== 'reveal' && gameState.hostId !== myId && !activeClients.has(gameState.hostId)) {
+        resetGame('Host đã mất kết nối. Bảng vẽ tự mở lại để tiếp tục vẽ tự do.');
+      }
     }, 4000);
 // ===== MỞ RỘNG: CHỌN MÀU VÀ CỤC TẨY =====
 
