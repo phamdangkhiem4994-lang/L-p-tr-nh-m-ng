@@ -83,6 +83,17 @@
     .chat-input { min-width: 0; flex: 1; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.65rem 0.75rem; color: var(--text-main); background: #0f172a; font-size: 0.875rem; outline: none; }
     .chat-input:focus { border-color: var(--accent-blue); }
     .chat-send { width: auto; margin: 0; }
+
+    .game-card { border-color: rgba(168, 85, 247, 0.45); }
+    .game-status { color: var(--text-muted); font-size: 0.78rem; line-height: 1.45; margin-bottom: 0.65rem; }
+    .game-panel { border-top: 1px solid var(--border-color); margin-top: 0.75rem; padding-top: 0.75rem; }
+    .game-phase { color: var(--accent-purple); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; }
+    .game-timer { float: right; color: var(--accent-amber); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .game-task { clear: both; background: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.7rem; margin: 0.6rem 0; font-size: 0.82rem; line-height: 1.45; overflow-wrap: anywhere; }
+    .game-input { width: 100%; resize: vertical; min-height: 64px; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.6rem; color: var(--text-main); background: #0f172a; font-size: 0.85rem; }
+    .game-results { max-height: 320px; overflow-y: auto; margin-top: 0.7rem; }
+    .game-result { background: #0f172a; border: 1px solid var(--border-color); border-radius: 7px; padding: 0.65rem; margin-top: 0.55rem; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; }
+    .game-result canvas { display: block; width: 100%; max-width: 240px; height: 144px; margin: 0.45rem auto; background: white; border-radius: 4px; }
     
     .color-picker { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
     .color-btn { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
@@ -233,6 +244,26 @@
             <p id="roomHelp" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.35rem;">
               Gửi mã phòng phía trên cho 2 người kia; họ cần mở cùng bản ứng dụng và nhập mã này.
             </p>
+          </div>
+
+          <div class="card game-card">
+            <div class="card-title">
+              <span>🎨 Thử thách chuyền hình</span>
+              <span class="badge badge-purple">Party</span>
+            </div>
+            <p id="gameStatus" class="game-status">Cần ít nhất 3 người trong phòng để bắt đầu. Mỗi ván gồm viết câu, vẽ và đoán.</p>
+            <button id="startGameButton" class="btn" type="button" onclick="startGame()">Bắt đầu thử thách</button>
+            <div id="gamePanel" class="game-panel" hidden>
+              <span id="gamePhase" class="game-phase"></span>
+              <span id="gameTimer" class="game-timer"></span>
+              <div id="gameTask" class="game-task"></div>
+              <form id="gameTextForm" onsubmit="submitGameText(event)" hidden>
+                <textarea id="gameTextInput" class="game-input" maxlength="160" placeholder="Nhập câu ngắn..."></textarea>
+                <button id="gameTextSubmit" class="btn" type="submit">Gửi</button>
+              </form>
+              <button id="gameDrawingSubmit" class="btn" type="button" onclick="submitGameDrawing()" hidden>Gửi hình vẽ</button>
+              <div id="gameResults" class="game-results" hidden></div>
+            </div>
           </div>
 
           <div class="card">
@@ -583,12 +614,19 @@
     let topicName;
     let presenceTopic;
     let chatTopic;
+    let gameTopic;
+    let gameState = null;
+    let myGameStrokes = [];
+    let myGameSubmitted = false;
+    const gamePhaseDuration = 60000;
+    const maxGameStrokes = 800;
 
     function setRoomTopics() {
       roomTopic = `netprog/private/${roomId}/whiteboard`;
       topicName = `${roomTopic}/draw`;
       presenceTopic = `${roomTopic}/presence`;
       chatTopic = `netprog/private/${roomId}/chat`;
+      gameTopic = `netprog/private/${roomId}/game`;
       document.getElementById('myRoomId').textContent = roomId;
       document.getElementById('roomIdInput').value = roomId;
       document.getElementById('chatRoomLabel').textContent = roomId.slice(0, 8);
@@ -611,7 +649,7 @@
         return;
       }
 
-      const oldTopics = [topicName, presenceTopic, chatTopic];
+      const oldTopics = [topicName, presenceTopic, chatTopic, gameTopic];
       roomId = requestedRoom;
       try { localStorage.setItem('multiClientBroadcast.roomId', roomId); } catch (e) {}
       setRoomTopics();
@@ -620,12 +658,13 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       updateClientListUI();
       clearChatMessages('Bạn đã chuyển sang phòng mới.');
+      resetGame('Đã chuyển phòng. Bắt đầu ván mới khi đủ người.');
       help.textContent = 'Đã chuyển phòng. Chia sẻ mã này với những người muốn cùng vẽ.';
       help.style.color = 'var(--accent-green)';
 
       if (client.connected) {
         client.unsubscribe(oldTopics, () => {
-          client.subscribe([topicName, presenceTopic, chatTopic], (err) => {
+          client.subscribe([topicName, presenceTopic, chatTopic, gameTopic], (err) => {
             if (!err) {
               client.publish(presenceTopic, JSON.stringify({ id: myId, status: 'Active' }));
               document.getElementById('chatStatus').textContent = 'Đã vào phòng chat.';
@@ -733,6 +772,330 @@
       });
     }
 
+    function createGameId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function publishGameMessage(message) {
+      if (!client.connected) return false;
+      client.publish(gameTopic, JSON.stringify({ ...message, sender: myId }), { qos: 0 });
+      return true;
+    }
+
+    function startGame() {
+      const status = document.getElementById('gameStatus');
+      if (!client.connected) {
+        status.textContent = 'Đang chờ kết nối MQTT để bắt đầu ván.';
+        return;
+      }
+      if (gameState && gameState.phase !== 'reveal') {
+        status.textContent = `Ván hiện tại do ${gameState.hostId} điều khiển.`;
+        return;
+      }
+
+      const now = Date.now();
+      const players = Array.from(activeClients.values())
+        .filter(player => player.id === myId || now - player.lastSeen <= 8000)
+        .map(player => player.id);
+      if (!players.includes(myId)) players.push(myId);
+      players.sort();
+      if (players.length < 3) {
+        status.textContent = `Cần ít nhất 3 người online; hiện có ${players.length}.`;
+        return;
+      }
+
+      const startMessage = {
+        type: 'game_start',
+        gameId: createGameId(),
+        hostId: myId,
+        players,
+        deadline: Date.now() + gamePhaseDuration
+      };
+      acceptGameStart({ ...startMessage, sender: myId });
+      publishGameMessage(startMessage);
+    }
+
+    function acceptGameStart(message) {
+      const players = Array.isArray(message.players)
+        ? message.players.filter(id => typeof id === 'string').slice(0, 20)
+        : [];
+      if (message.sender !== message.hostId || players.length < 3 || !players.includes(message.hostId) || !players.includes(myId)) return;
+      if (gameState && gameState.phase !== 'reveal') return;
+
+      gameState = {
+        gameId: message.gameId,
+        hostId: message.hostId,
+        players,
+        phase: 'write',
+        deadline: message.deadline,
+        prompts: {},
+        drawings: {},
+        guesses: {},
+        assignments: {}
+      };
+      myGameStrokes = [];
+      myGameSubmitted = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderGameUI('write');
+    }
+
+    function sanitizeGameStrokes(strokes) {
+      if (!Array.isArray(strokes)) return [];
+      return strokes.slice(0, maxGameStrokes).filter(stroke =>
+        stroke && [stroke.x1, stroke.y1, stroke.x2, stroke.y2, Number(stroke.size)].every(Number.isFinite) &&
+        typeof stroke.color === 'string' && (/^#[0-9a-f]{6}$/i.test(stroke.color) || stroke.color === '__eraser__')
+      ).map(stroke => ({
+        x1: Math.max(0, Math.min(canvas.width, stroke.x1)),
+        y1: Math.max(0, Math.min(canvas.height, stroke.y1)),
+        x2: Math.max(0, Math.min(canvas.width, stroke.x2)),
+        y2: Math.max(0, Math.min(canvas.height, stroke.y2)),
+        color: stroke.color,
+        size: Math.max(1, Math.min(20, Number(stroke.size)))
+      }));
+    }
+
+    function recordGameAnswer(message) {
+      if (!gameState || message.gameId !== gameState.gameId || !gameState.players.includes(message.sender)) return;
+      if (message.kind === 'prompt' && gameState.phase === 'write') {
+        if (typeof message.text === 'string') gameState.prompts[message.sender] = message.text.trim().slice(0, 160);
+      } else if (message.kind === 'drawing' && gameState.phase === 'draw') {
+        gameState.drawings[message.sender] = sanitizeGameStrokes(message.strokes);
+      } else if (message.kind === 'guess' && gameState.phase === 'guess') {
+        if (typeof message.text === 'string') gameState.guesses[message.sender] = message.text.trim().slice(0, 160);
+      } else {
+        return;
+      }
+
+      if (myId === gameState.hostId) advanceGameWhenReady();
+    }
+
+    function advanceGameWhenReady() {
+      if (!gameState || myId !== gameState.hostId) return;
+      const answers = gameState.phase === 'write' ? gameState.prompts
+        : gameState.phase === 'draw' ? gameState.drawings
+        : gameState.phase === 'guess' ? gameState.guesses
+        : null;
+      if (answers && gameState.players.every(id => Object.prototype.hasOwnProperty.call(answers, id))) {
+        advanceGamePhase();
+      }
+    }
+
+    function advanceGamePhase() {
+      if (!gameState || myId !== gameState.hostId) return;
+      const { players, gameId } = gameState;
+      let phaseMessage;
+
+      if (gameState.phase === 'write') {
+        players.forEach(id => { if (!gameState.prompts[id]) gameState.prompts[id] = '(Không kịp gửi câu)'; });
+        const assignments = {};
+        players.forEach((drawer, index) => {
+          const promptOwner = players[(index + players.length - 1) % players.length];
+          assignments[drawer] = { sourcePlayer: promptOwner, text: gameState.prompts[promptOwner] };
+        });
+        phaseMessage = { phase: 'draw', assignments, prompts: gameState.prompts };
+      } else if (gameState.phase === 'draw') {
+        players.forEach(id => { if (!gameState.drawings[id]) gameState.drawings[id] = []; });
+        const assignments = {};
+        players.forEach((guesser, index) => {
+          const drawer = players[(index + players.length - 1) % players.length];
+          assignments[guesser] = drawer;
+        });
+        phaseMessage = { phase: 'guess', assignments, prompts: gameState.prompts, drawings: gameState.drawings };
+      } else if (gameState.phase === 'guess') {
+        players.forEach(id => { if (!gameState.guesses[id]) gameState.guesses[id] = '(Không kịp đoán)'; });
+        phaseMessage = { phase: 'reveal', prompts: gameState.prompts, drawings: gameState.drawings, guesses: gameState.guesses };
+      } else {
+        return;
+      }
+
+      phaseMessage.type = 'game_phase';
+      phaseMessage.gameId = gameId;
+      phaseMessage.deadline = phaseMessage.phase === 'reveal' ? 0 : Date.now() + gamePhaseDuration;
+      phaseMessage.sender = myId;
+      applyGamePhase(phaseMessage);
+      publishGameMessage(phaseMessage);
+    }
+
+    function applyGamePhase(message) {
+      if (!gameState || message.gameId !== gameState.gameId || message.sender !== gameState.hostId) return;
+      if (!['draw', 'guess', 'reveal'].includes(message.phase)) return;
+
+      gameState.phase = message.phase;
+      gameState.deadline = message.deadline;
+      gameState.assignments = message.assignments || {};
+      if (message.prompts) gameState.prompts = message.prompts;
+      if (message.drawings) gameState.drawings = message.drawings;
+      if (message.guesses) gameState.guesses = message.guesses;
+      myGameSubmitted = false;
+      document.getElementById('gameTextInput').value = '';
+      painting = false;
+
+      if (message.phase === 'draw') {
+        myGameStrokes = [];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      } else if (message.phase === 'guess') {
+        const drawer = gameState.assignments[myId];
+        drawGameOnMainCanvas(gameState.drawings[drawer] || []);
+      }
+      renderGameUI(message.phase);
+    }
+
+    function drawGameOnMainCanvas(strokes) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      sanitizeGameStrokes(strokes).forEach(stroke => {
+        drawLine(stroke.x1, stroke.y1, stroke.x2, stroke.y2, stroke.color, stroke.size);
+      });
+    }
+
+    function drawGameOnMiniCanvas(targetCanvas, strokes) {
+      const targetCtx = targetCanvas.getContext('2d');
+      const scaleX = targetCanvas.width / canvas.width;
+      const scaleY = targetCanvas.height / canvas.height;
+      targetCtx.fillStyle = '#ffffff';
+      targetCtx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+      sanitizeGameStrokes(strokes).forEach(stroke => {
+        targetCtx.save();
+        if (stroke.color === '__eraser__') {
+          targetCtx.globalCompositeOperation = 'destination-out';
+          targetCtx.strokeStyle = '#000000';
+        } else {
+          targetCtx.strokeStyle = stroke.color;
+        }
+        targetCtx.lineWidth = Math.max(1, stroke.size * scaleX);
+        targetCtx.lineCap = 'round';
+        targetCtx.beginPath();
+        targetCtx.moveTo(stroke.x1 * scaleX, stroke.y1 * scaleY);
+        targetCtx.lineTo(stroke.x2 * scaleX, stroke.y2 * scaleY);
+        targetCtx.stroke();
+        targetCtx.restore();
+      });
+    }
+
+    function renderGameUI(phase) {
+      const panel = document.getElementById('gamePanel');
+      const status = document.getElementById('gameStatus');
+      const startButton = document.getElementById('startGameButton');
+      const textForm = document.getElementById('gameTextForm');
+      const drawingButton = document.getElementById('gameDrawingSubmit');
+      const results = document.getElementById('gameResults');
+      const task = document.getElementById('gameTask');
+      panel.hidden = !gameState;
+      if (!gameState) {
+        startButton.disabled = false;
+        return;
+      }
+
+      const active = phase !== 'reveal';
+      startButton.disabled = active;
+      startButton.textContent = phase === 'reveal' ? 'Chơi ván mới' : 'Đang chơi...';
+      status.textContent = `Host: ${gameState.hostId} · ${gameState.players.length} người · 60 giây mỗi lượt`;
+      document.getElementById('gamePhase').textContent = ({ write: 'Viết câu', draw: 'Vẽ câu', guess: 'Đoán hình', reveal: 'Kết quả' })[phase] || phase;
+      document.getElementById('gameTimer').textContent = phase === 'reveal' ? '✓' : `${Math.max(0, Math.ceil((gameState.deadline - Date.now()) / 1000))}s`;
+      textForm.hidden = !((phase === 'write' || phase === 'guess') && !myGameSubmitted);
+      drawingButton.hidden = !(phase === 'draw' && !myGameSubmitted);
+      results.hidden = phase !== 'reveal';
+
+      if (phase === 'write') {
+        task.textContent = 'Viết một câu ngắn, vui hoặc bất ngờ. Câu sẽ được chuyền cho người khác vẽ.';
+        document.getElementById('gameTextInput').placeholder = 'Viết câu mở đầu (tối đa 160 ký tự)';
+      } else if (phase === 'draw') {
+        const assignment = gameState.assignments[myId];
+        task.textContent = `Hãy vẽ câu của ${assignment?.sourcePlayer || 'người trước'}: “${assignment?.text || ''}” trên bảng bên phải, rồi bấm Gửi hình vẽ.`;
+      } else if (phase === 'guess') {
+        task.textContent = 'Đoán hình đang hiện trên bảng bên phải.';
+        document.getElementById('gameTextInput').placeholder = 'Bạn nghĩ hình này là gì?';
+      } else if (phase === 'reveal') {
+        task.textContent = 'Xem câu ban đầu, hình vẽ và câu đoán của từng chuỗi.';
+        renderGameResults(results);
+      }
+    }
+
+    function submitGameText(event) {
+      event.preventDefault();
+      if (!gameState || myGameSubmitted || !['write', 'guess'].includes(gameState.phase)) return;
+      if (!client.connected) {
+        document.getElementById('gameStatus').textContent = 'Mất kết nối. Đang chờ kết nối lại trước khi gửi.';
+        return;
+      }
+      const text = document.getElementById('gameTextInput').value.trim().slice(0, 160);
+      if (!text) return;
+      const submittedPhase = gameState.phase;
+      const kind = gameState.phase === 'write' ? 'prompt' : 'guess';
+      const answer = { type: 'game_answer', gameId: gameState.gameId, kind, text, sender: myId };
+      myGameSubmitted = true;
+      recordGameAnswer(answer);
+      publishGameMessage(answer);
+      renderGameUI(gameState.phase);
+      if (gameState.phase === submittedPhase) document.getElementById('gameStatus').textContent = 'Đã gửi. Đang chờ những người còn lại...';
+    }
+
+    function submitGameDrawing() {
+      if (!gameState || gameState.phase !== 'draw' || myGameSubmitted) return;
+      if (!client.connected) {
+        document.getElementById('gameStatus').textContent = 'Mất kết nối. Đang chờ kết nối lại trước khi gửi.';
+        return;
+      }
+      const submittedPhase = gameState.phase;
+      const answer = { type: 'game_answer', gameId: gameState.gameId, kind: 'drawing', strokes: myGameStrokes, sender: myId };
+      myGameSubmitted = true;
+      recordGameAnswer(answer);
+      publishGameMessage(answer);
+      renderGameUI(gameState.phase);
+      if (gameState.phase === submittedPhase) document.getElementById('gameStatus').textContent = 'Đã gửi hình. Đang chờ những người còn lại...';
+    }
+
+    function renderGameResults(container) {
+      container.replaceChildren();
+      const players = gameState.players;
+      players.forEach((promptOwner, index) => {
+        const drawer = players[(index + 1) % players.length];
+        const guesser = players[(index + 2) % players.length];
+        const card = document.createElement('article');
+        card.className = 'game-result';
+        const prompt = document.createElement('p');
+        prompt.textContent = `💬 ${promptOwner} viết: “${gameState.prompts[promptOwner] || '(trống)'}”`;
+        const miniCanvas = document.createElement('canvas');
+        miniCanvas.width = 240;
+        miniCanvas.height = 144;
+        const drawing = document.createElement('p');
+        drawing.textContent = `🎨 ${drawer} vẽ:`;
+        const guess = document.createElement('p');
+        guess.textContent = `🤔 ${guesser} đoán: “${gameState.guesses[guesser] || '(trống)'}”`;
+        card.append(prompt, drawing, miniCanvas, guess);
+        container.appendChild(card);
+        drawGameOnMiniCanvas(miniCanvas, gameState.drawings[drawer] || []);
+      });
+    }
+
+    function resetGame(message) {
+      gameState = null;
+      myGameStrokes = [];
+      myGameSubmitted = false;
+      document.getElementById('gamePanel').hidden = true;
+      document.getElementById('startGameButton').disabled = false;
+      document.getElementById('startGameButton').textContent = 'Bắt đầu thử thách';
+      document.getElementById('gameStatus').textContent = message || 'Cần ít nhất 3 người trong phòng để bắt đầu.';
+    }
+
+    function handleGameMessage(message) {
+      if (message.type === 'game_start') {
+        acceptGameStart(message);
+      } else if (message.type === 'game_answer') {
+        recordGameAnswer(message);
+      } else if (message.type === 'game_phase') {
+        if (!gameState && message.phase !== 'reveal') return;
+        applyGamePhase(message);
+      }
+    }
+
+    setInterval(() => {
+      if (!gameState || !gameState.deadline || gameState.phase === 'reveal') return;
+      const secondsLeft = Math.max(0, Math.ceil((gameState.deadline - Date.now()) / 1000));
+      document.getElementById('gameTimer').textContent = `${secondsLeft}s`;
+      if (secondsLeft === 0 && myId === gameState.hostId) advanceGamePhase();
+    }, 500);
+
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') closeChat();
     });
@@ -744,7 +1107,7 @@
       document.getElementById('connStatus').textContent = 'Đã kết nối';
       document.getElementById('connStatus').className = 'badge badge-green';
 
-      client.subscribe([topicName, presenceTopic, chatTopic], (err) => {
+      client.subscribe([topicName, presenceTopic, chatTopic, gameTopic], (err) => {
         if (!err) {
           logNet(`Đã Subscribe vào các Topic chính và chat phòng.`);
           document.getElementById('chatStatus').textContent = 'Đã kết nối chat.';
@@ -760,7 +1123,9 @@
       try {
         const data = JSON.parse(payload.toString());
 
-        if (topic === chatTopic) {
+        if (topic === gameTopic) {
+          handleGameMessage(data);
+        } else if (topic === chatTopic) {
           if (data.type === 'chat' && data.sender !== myId) appendChatMessage(data);
         } else if (topic === presenceTopic) {
           if (data.id && data.id !== myId) {
@@ -768,6 +1133,7 @@
             updateClientListUI();
           }
         } else if (topic === topicName) {
+          if (gameState && gameState.phase !== 'reveal') return;
           if (data.sender === myId) return;
 
           if (data.type === 'draw') {
@@ -801,6 +1167,8 @@
 
     function startPosition(e) {
       e.preventDefault();
+      if (gameState && !['draw', 'reveal'].includes(gameState.phase)) return;
+      if (gameState?.phase === 'draw' && myGameSubmitted) return;
       painting = true;
       const pos = getCursorPos(e);
       lastX = pos.x;
@@ -817,7 +1185,11 @@
 
       drawLine(lastX, lastY, currentX, currentY, currentColor, size);
 
-      if (client.connected) {
+      if (gameState?.phase === 'draw') {
+        if (!myGameSubmitted && myGameStrokes.length < maxGameStrokes) {
+          myGameStrokes.push({ x1: lastX, y1: lastY, x2: currentX, y2: currentY, color: currentColor, size: Number(size) });
+        }
+      } else if (client.connected) {
         const packet = JSON.stringify({
           sender: myId,
           type: 'draw',
@@ -865,6 +1237,11 @@
     }
 
     function clearBoard() {
+      if (gameState && gameState.phase !== 'reveal') {
+        if (gameState.phase === 'draw' && !myGameSubmitted) myGameStrokes = [];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (client.connected) {
         client.publish(topicName, JSON.stringify({ sender: myId, type: 'clear' }));
