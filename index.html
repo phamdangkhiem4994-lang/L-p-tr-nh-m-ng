@@ -240,6 +240,33 @@
               <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Độ dày: <span id="sizeVal">4</span>px</label>
               <input type="range" id="brushSize" min="1" max="20" value="4" style="width: 100%; accent-color: var(--accent-blue);" oninput="document.getElementById('sizeVal').textContent=this.value">
             </div>
+            <div style="margin-bottom: 12px;">
+  <label for="customPenColor">Chọn màu bất kỳ:</label>
+
+  <input type="color"
+    id="customPenColor"
+    value="#0f172a"
+    oninput="chooseCustomColor(this.value)">
+
+  <button type="button"
+    id="penToolButton"
+    class="btn"
+    onclick="usePenTool()">
+    ✏️ Bút vẽ
+  </button>
+
+  <button type="button"
+    id="eraserToolButton"
+    class="btn"
+    onclick="useEraserTool()">
+    🧽 Cục tẩy
+  </button>
+
+  <small id="drawingToolStatus"
+    style="display: block; margin-top: 8px;">
+    Đang dùng: Bút vẽ
+  </small>
+</div>
             <button class="btn btn-danger" onclick="clearBoard()">Xóa Sạch Bảng Chung</button>
           </div>
 
@@ -732,7 +759,97 @@
       });
       if (changed) updateClientListUI();
     }, 4000);
+// ===== MỞ RỘNG: CHỌN MÀU VÀ CỤC TẨY =====
 
+const ERASER_COLOR = "__eraser__";
+let savedPenColor = currentColor;
+
+// Giữ lại hàm gốc.
+const originalSetColor = setColor;
+const originalDrawLine = drawLine;
+
+function updateDrawingToolUI(isErasing) {
+  const penButton = document.getElementById("penToolButton");
+  const eraserButton = document.getElementById("eraserToolButton");
+  const status = document.getElementById("drawingToolStatus");
+
+  penButton.style.outline = isErasing ? "none" : "2px solid white";
+  eraserButton.style.outline = isErasing ? "2px solid white" : "none";
+
+  status.textContent = isErasing
+    ? "Đang dùng: Cục tẩy — chỉnh kích thước bằng thanh Độ dày"
+    : "Đang dùng: Bút vẽ";
+
+  canvas.style.cursor = isErasing ? "cell" : "crosshair";
+}
+
+// Chọn màu có sẵn cũng tự chuyển về bút vẽ.
+setColor = function (color, element) {
+  document.getElementById("customPenColor")
+    .classList.remove("active");
+
+  originalSetColor(color, element);
+
+  savedPenColor = color;
+  document.getElementById("customPenColor").value = color;
+
+  updateDrawingToolUI(false);
+};
+
+// Chọn màu bất kỳ.
+function chooseCustomColor(color) {
+  setColor(color, document.getElementById("customPenColor"));
+}
+
+// Bật cục tẩy.
+function useEraserTool() {
+  currentColor = ERASER_COLOR;
+  updateDrawingToolUI(true);
+}
+
+// Bật bút, khôi phục màu đã chọn.
+function usePenTool() {
+  currentColor = savedPenColor;
+  updateDrawingToolUI(false);
+}
+
+// Xử lý cả nét vẽ tại máy này và nét nhận qua MQTT.
+drawLine = function (x1, y1, x2, y2, color, size) {
+  ctx.save();
+
+  try {
+    if (color === ERASER_COLOR) {
+      ctx.globalCompositeOperation = "destination-out";
+      originalDrawLine(x1, y1, x2, y2, "#000000", size);
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      originalDrawLine(x1, y1, x2, y2, color, size);
+    }
+  } finally {
+    ctx.restore();
+  }
+};
+
+// Sửa tọa độ khi kích thước hiển thị khác kích thước canvas.
+getCursorPos = function (e) {
+  const rect = canvas.getBoundingClientRect();
+  const point = e.touches && e.touches.length > 0
+    ? e.touches[0]
+    : e;
+
+  return {
+    x: (point.clientX - rect.left) * (canvas.width / rect.width),
+    y: (point.clientY - rect.top) * (canvas.height / rect.height)
+  };
+};
+
+// Đồng bộ trạng thái ban đầu với màu đen của bản gốc.
+const initialColorButton =
+  document.querySelector(".color-picker .color-btn.active");
+
+if (initialColorButton) {
+  setColor("#0f172a", initialColorButton);
+}
     window.onload = () => {
       startUnicastAnim();
       startBroadcastAnim();
