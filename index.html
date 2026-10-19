@@ -63,6 +63,26 @@
 
     .client-list { max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
     .client-item { background-color: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.8rem; display: flex; align-items: center; justify-content: space-between; }
+
+    .chat-backdrop { position: fixed; inset: 0; z-index: 300; display: none; align-items: center; justify-content: center; padding: 1rem; background: rgba(2, 6, 23, 0.72); }
+    .chat-backdrop.open { display: flex; }
+    .chat-popup { display: flex; flex-direction: column; width: min(440px, 100%); max-height: min(620px, 85vh); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5); overflow: hidden; }
+    .chat-popup-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.1rem; border-bottom: 1px solid var(--border-color); }
+    .chat-popup-title { font-size: 1rem; font-weight: 700; }
+    .chat-close { border: 0; background: transparent; color: var(--text-muted); font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0.1rem 0.35rem; }
+    .chat-close:hover { color: var(--text-main); }
+    .chat-room-caption { padding: 0.5rem 1rem; color: var(--text-muted); font-size: 0.72rem; border-bottom: 1px solid var(--border-color); }
+    .chat-messages { min-height: 220px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.65rem; padding: 1rem; background: #0b1220; }
+    .chat-empty { margin: auto; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
+    .chat-message { max-width: 88%; align-self: flex-start; padding: 0.55rem 0.7rem; border: 1px solid var(--border-color); border-radius: 10px 10px 10px 2px; background: var(--bg-card); overflow-wrap: anywhere; }
+    .chat-message.mine { align-self: flex-end; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.12); border-radius: 10px 10px 2px 10px; }
+    .chat-message-meta { color: var(--accent-blue); font-size: 0.68rem; margin-bottom: 0.25rem; }
+    .chat-message-text { white-space: pre-wrap; font-size: 0.88rem; line-height: 1.4; }
+    .chat-status { min-height: 1rem; padding: 0 1rem 0.45rem; color: var(--text-muted); font-size: 0.72rem; }
+    .chat-form { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--border-color); }
+    .chat-input { min-width: 0; flex: 1; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.65rem 0.75rem; color: var(--text-main); background: #0f172a; font-size: 0.875rem; outline: none; }
+    .chat-input:focus { border-color: var(--accent-blue); }
+    .chat-send { width: auto; margin: 0; }
     
     .color-picker { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
     .color-btn { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
@@ -223,6 +243,7 @@
             <div class="client-list" id="clientListContainer">
               <div style="font-size: 0.8rem; color: var(--text-muted); text-align: center; padding: 1rem;">Đang đồng bộ danh sách...</div>
             </div>
+            <button class="btn" type="button" onclick="openChat()">💬 Mở chat phòng</button>
           </div>
 
           <div class="card">
@@ -307,6 +328,24 @@
       </div>
     </div>
   </main>
+
+  <div id="chatBackdrop" class="chat-backdrop" aria-hidden="true" onclick="if (event.target === this) closeChat()">
+    <section class="chat-popup" role="dialog" aria-modal="true" aria-labelledby="chatTitle">
+      <div class="chat-popup-header">
+        <div id="chatTitle" class="chat-popup-title">💬 Chat phòng</div>
+        <button class="chat-close" type="button" aria-label="Đóng chat" onclick="closeChat()">&times;</button>
+      </div>
+      <div class="chat-room-caption">Phòng <strong id="chatRoomLabel">--</strong></div>
+      <div id="chatMessages" class="chat-messages" aria-live="polite">
+        <div class="chat-empty">Chưa có tin nhắn. Bắt đầu trò chuyện nhé!</div>
+      </div>
+      <div id="chatStatus" class="chat-status" aria-live="polite"></div>
+      <form class="chat-form" onsubmit="sendChatMessage(event)">
+        <input id="chatInput" class="chat-input" type="text" maxlength="500" autocomplete="off" placeholder="Nhập tin nhắn..." aria-label="Tin nhắn">
+        <button class="btn chat-send" type="submit">Gửi</button>
+      </form>
+    </section>
+  </div>
 
   <script>
     // --- TAB SWITCHING ---
@@ -516,13 +555,16 @@
     let roomTopic;
     let topicName;
     let presenceTopic;
+    let chatTopic;
 
     function setRoomTopics() {
       roomTopic = `netprog/private/${roomId}/whiteboard`;
       topicName = `${roomTopic}/draw`;
       presenceTopic = `${roomTopic}/presence`;
+      chatTopic = `netprog/private/${roomId}/chat`;
       document.getElementById('myRoomId').textContent = roomId;
       document.getElementById('roomIdInput').value = roomId;
+      document.getElementById('chatRoomLabel').textContent = roomId.slice(0, 8);
     }
 
     setRoomTopics();
@@ -542,7 +584,7 @@
         return;
       }
 
-      const oldTopics = [topicName, presenceTopic];
+      const oldTopics = [topicName, presenceTopic, chatTopic];
       roomId = requestedRoom;
       try { localStorage.setItem('multiClientBroadcast.roomId', roomId); } catch (e) {}
       setRoomTopics();
@@ -550,13 +592,17 @@
       activeClients.set(myId, { id: myId, status: 'Đang hoạt động', lastSeen: Date.now() });
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       updateClientListUI();
+      clearChatMessages('Bạn đã chuyển sang phòng mới.');
       help.textContent = 'Đã chuyển phòng. Chia sẻ mã này với những người muốn cùng vẽ.';
       help.style.color = 'var(--accent-green)';
 
       if (client.connected) {
         client.unsubscribe(oldTopics, () => {
-          client.subscribe([topicName, presenceTopic], (err) => {
-            if (!err) client.publish(presenceTopic, JSON.stringify({ id: myId, status: 'Active' }));
+          client.subscribe([topicName, presenceTopic, chatTopic], (err) => {
+            if (!err) {
+              client.publish(presenceTopic, JSON.stringify({ id: myId, status: 'Active' }));
+              document.getElementById('chatStatus').textContent = 'Đã vào phòng chat.';
+            }
           });
         });
       }
@@ -591,6 +637,79 @@
       });
     }
 
+    function openChat() {
+      const backdrop = document.getElementById('chatBackdrop');
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      document.getElementById('chatInput').focus();
+    }
+
+    function closeChat() {
+      const backdrop = document.getElementById('chatBackdrop');
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden', 'true');
+    }
+
+    function clearChatMessages(note) {
+      const messages = document.getElementById('chatMessages');
+      messages.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'chat-empty';
+      empty.textContent = note || 'Chưa có tin nhắn. Bắt đầu trò chuyện nhé!';
+      messages.appendChild(empty);
+    }
+
+    function appendChatMessage(data) {
+      if (!data || typeof data.text !== 'string' || typeof data.sender !== 'string') return;
+      const text = data.text.trim().slice(0, 500);
+      if (!text) return;
+
+      const messages = document.getElementById('chatMessages');
+      messages.querySelector('.chat-empty')?.remove();
+      const item = document.createElement('article');
+      item.className = `chat-message${data.sender === myId ? ' mine' : ''}`;
+      const meta = document.createElement('div');
+      meta.className = 'chat-message-meta';
+      const timestamp = Number.isFinite(data.sentAt) ? new Date(data.sentAt) : new Date();
+      meta.textContent = `${data.sender === myId ? 'Bạn' : data.sender} · ${timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      const body = document.createElement('p');
+      body.className = 'chat-message-text';
+      body.textContent = text;
+      item.append(meta, body);
+      messages.appendChild(item);
+      while (messages.querySelectorAll('.chat-message').length > 100) {
+        messages.querySelector('.chat-message')?.remove();
+      }
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function sendChatMessage(event) {
+      event.preventDefault();
+      const input = document.getElementById('chatInput');
+      const status = document.getElementById('chatStatus');
+      const text = input.value.trim();
+      if (!text) return;
+      if (!client.connected) {
+        status.textContent = 'Chưa kết nối tới broker. Tin nhắn chưa được gửi.';
+        return;
+      }
+
+      const message = { type: 'chat', sender: myId, text: text.slice(0, 500), sentAt: Date.now() };
+      client.publish(chatTopic, JSON.stringify(message), { qos: 0 }, (err) => {
+        if (err) {
+          status.textContent = 'Gửi tin nhắn thất bại. Thử lại nhé.';
+          return;
+        }
+        appendChatMessage(message);
+        input.value = '';
+        status.textContent = '';
+      });
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeChat();
+    });
+
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', { clientId: myId });
 
     client.on('connect', () => {
@@ -598,8 +717,11 @@
       document.getElementById('connStatus').textContent = 'Đã kết nối';
       document.getElementById('connStatus').className = 'badge badge-green';
 
-      client.subscribe([topicName, presenceTopic], (err) => {
-        if (!err) logNet(`Đã Subscribe vào các Topic chính.`);
+      client.subscribe([topicName, presenceTopic, chatTopic], (err) => {
+        if (!err) {
+          logNet(`Đã Subscribe vào các Topic chính và chat phòng.`);
+          document.getElementById('chatStatus').textContent = 'Đã kết nối chat.';
+        }
       });
 
       setInterval(() => {
@@ -611,7 +733,9 @@
       try {
         const data = JSON.parse(payload.toString());
 
-        if (topic === presenceTopic) {
+        if (topic === chatTopic) {
+          if (data.type === 'chat' && data.sender !== myId) appendChatMessage(data);
+        } else if (topic === presenceTopic) {
           if (data.id && data.id !== myId) {
             activeClients.set(data.id, { id: data.id, status: 'Trực tuyến', lastSeen: Date.now() });
             updateClientListUI();
