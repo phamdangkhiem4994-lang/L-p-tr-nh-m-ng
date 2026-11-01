@@ -2,7 +2,7 @@ import { SoundEffects, transitionSounds, mountSoundControls } from './sound.js';
 import { invitedRoom, mountInvite } from './invite.js';
 import { Connection, enterRoom, readSession, saveSession } from './network.js';
 import { DrawingPad, observeDrawing } from './canvas.js';
-import { landing, lobby, game } from './views.js';
+import { landing, lobby, game } from './views.js?v=sketchbook2';
 import { results, mountResults } from './results.js';
 
 const root=document.querySelector('#app');
