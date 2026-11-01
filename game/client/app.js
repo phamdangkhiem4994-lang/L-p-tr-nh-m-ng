@@ -1,3 +1,4 @@
+import { invitedRoom, mountInvite } from './invite.js';
 import { Connection, enterRoom, readSession, saveSession } from './network.js';
 import { DrawingPad, observeDrawing } from './canvas.js';
 import { landing, lobby, game } from './views.js';
@@ -10,6 +11,7 @@ const leaveButton=document.querySelector('#leave');
 let session=readSession(),connection=null,snapshot=null,currentKey='',pad=null,cleanups=[],pending=false;
 let connected=false,toastTimer=null;
 const drafts=new Map();
+const inviteCode=invitedRoom(location.href);
 function toast(message) {
   notice.textContent=message;notice.hidden=false;clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>{notice.hidden=true;},6000);
@@ -27,6 +29,7 @@ function showLanding() {
   root.innerHTML=landing();leaveButton.hidden=true;connectionStatus.textContent='Vẽ tiếp, vui thêm.';
   const name=root.querySelector('#name'),code=root.querySelector('#code');
   name.maxLength=24;code.maxLength=6;
+  if(inviteCode){code.value=inviteCode;root.querySelector('#create').textContent='Vào phòng được mời →';name.focus();}
   const form=root.querySelector('#entry-form');
   const submit=async join=>{
     if(!name.reportValidity())return;
@@ -36,7 +39,7 @@ function showLanding() {
     try {session=await enterRoom(name.value.trim(),roomCode);saveSession(session);connect();}
     catch(error){toast(error.message);buttons.forEach(b=>b.disabled=false);}
   };
-  form.addEventListener('submit',event=>{event.preventDefault();submit(false);});
+  form.addEventListener('submit',event=>{event.preventDefault();submit(Boolean(inviteCode));});
   root.querySelector('#join').addEventListener('click',()=>submit(true));
   code.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();submit(true);}});
 }
@@ -74,6 +77,7 @@ function render() {
     try {await navigator.clipboard.writeText(snapshot.roomCode);toast('Đã sao chép mã phòng.');}
     catch {toast(`Mã phòng: ${snapshot.roomCode}`);}
   });
+  mountInvite(root,snapshot.roomCode,toast);
   root.querySelector('#start')?.addEventListener('click',()=>send({type:'game.start'}));
   root.querySelector('#restart')?.addEventListener('click',()=>send({type:'game.restart'}));
   if(snapshot.phase==='reveal'){cleanups.push(mountResults(root,snapshot));return;}
@@ -154,4 +158,4 @@ leaveButton.addEventListener('click',()=>{
   reset();
 });
 setInterval(updateClock,250);
-if(session){root.innerHTML='<div class="wait-space"><h1>Đang trở lại phòng…</h1></div>';connect();}else showLanding();
+if(session&&(!inviteCode||session.roomCode===inviteCode)){root.innerHTML='<div class="wait-space"><h1>Đang trở lại phòng…</h1></div>';connect();}else showLanding();
