@@ -1,3 +1,4 @@
+import { SoundEffects, transitionSounds, mountSoundControls } from './sound.js';
 import { invitedRoom, mountInvite } from './invite.js';
 import { Connection, enterRoom, readSession, saveSession } from './network.js';
 import { DrawingPad, observeDrawing } from './canvas.js';
@@ -10,6 +11,11 @@ const connectionStatus=document.querySelector('#connection');
 const leaveButton=document.querySelector('#leave');
 let session=readSession(),connection=null,snapshot=null,currentKey='',pad=null,cleanups=[],pending=false;
 let connected=false,toastTimer=null;
+let soundStorage;try{soundStorage=localStorage;}catch{}
+const sound=new SoundEffects({storage:soundStorage,createContext:()=>{
+  const Context=window.AudioContext||window.webkitAudioContext;return Context?new Context():null;
+},visible:()=>!document.hidden});
+mountSoundControls(sound,document);
 const drafts=new Map();
 const inviteCode=invitedRoom(location.href);
 function toast(message) {
@@ -61,6 +67,8 @@ function connect() {
   });
 }
 function receive(next) {
+  if(pending&&snapshot?.task&&(next.submitted||next.turnId!==snapshot.turnId))sound.play('submit');
+  for(const effect of transitionSounds(snapshot,next))sound.play(effect);
   const key=`${next.phase}:${next.gameId}:${next.turnId}:${next.task?.kind??'waiting'}:${next.submitted}`;
   const changed=key!==currentKey;
   if(snapshot && snapshot.gameId!==next.gameId)drafts.clear();
@@ -166,6 +174,7 @@ function updateControls() {
 function updateClock() {
   const clock=root.querySelector('#clock');if(!clock||!snapshot)return;
   const remaining=Math.max(0,Math.ceil((snapshot.deadline-Date.now())/1000));
+  sound.countdown(snapshot,remaining);
   clock.textContent=remaining;clock.parentElement.classList.toggle('urgent',remaining<=10);
 }
 leaveButton.addEventListener('click',()=>{
