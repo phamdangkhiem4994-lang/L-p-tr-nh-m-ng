@@ -27,6 +27,7 @@ export function observeDrawing(canvas, strokes) {
 export class DrawingPad {
   constructor(canvas, strokes = [], onChange = () => {}) {
     Object.assign(this, { canvas, strokes, onChange, color: '#302c38', size: 5, locked: false, pointer: null });
+    this.redoStrokes = [];
     this.inkColor = this.color;
     this.abort = new AbortController();
     const options = { signal: this.abort.signal };
@@ -46,6 +47,7 @@ export class DrawingPad {
     if (this.locked || this.pointer !== null || event.button !== 0) return;
     event.preventDefault(); this.pointer = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
+    this.redoStrokes.length = 0;
     this.strokes.push({ color: this.color, size: this.size, points: [this.point(event)] });
     this.render(); this.onChange(this.strokes);
   }
@@ -63,8 +65,18 @@ export class DrawingPad {
   finish() { this.pointer = null; this.onChange(this.strokes); }
   selectColor(color) { this.inkColor = color; this.color = color; }
   toggleEraser() { this.color = this.color === '#ffffff' ? this.inkColor : '#ffffff'; }
-  undo() { if (!this.locked) { this.finish(); this.strokes.pop(); this.render(); this.onChange(this.strokes); } }
-  clear() { if (!this.locked) { this.finish(); this.strokes.length = 0; this.render(); this.onChange(this.strokes); } }
+  undo() {
+    if (this.locked) return;
+    this.finish();
+    if (this.strokes.length) this.redoStrokes.push(this.strokes.pop());
+    this.render(); this.onChange(this.strokes);
+  }
+  redo() {
+    if (this.locked || this.pointer !== null || !this.redoStrokes.length) return;
+    this.strokes.push(this.redoStrokes.pop());
+    this.render(); this.onChange(this.strokes);
+  }
+  clear() { if (!this.locked) { this.finish(); this.redoStrokes.push(...this.strokes.slice().reverse()); this.strokes.length = 0; this.render(); this.onChange(this.strokes); } }
   hasInk() { return this.strokes.some(stroke => stroke.color.toLowerCase() !== '#ffffff' && stroke.points.length); }
   render() { paint(this.canvas, this.strokes); }
   destroy() { this.finish(); this.observer.disconnect(); this.abort.abort(); }

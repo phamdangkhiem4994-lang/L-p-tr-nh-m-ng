@@ -99,6 +99,7 @@ function render() {
       root.querySelectorAll('[data-color]').forEach(b=>{const selected=b.dataset.color===pad.color;b.classList.toggle('selected',selected);b.setAttribute('aria-pressed',String(selected));});
     });
     root.querySelector('#undo').addEventListener('click',()=>pad.undo());
+    root.querySelector('#redo').addEventListener('click',()=>pad.redo());
     root.querySelector('#clear').addEventListener('click',()=>{if(!pending&&confirm('Xóa toàn bộ nét vẽ ở lượt này?'))pad.clear();});
     root.querySelector('#submit-answer').addEventListener('click',()=>submit('drawing'));
   }
