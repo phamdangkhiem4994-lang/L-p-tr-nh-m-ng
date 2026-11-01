@@ -135,7 +135,12 @@ function updateControls() {
   for(const id of ['start','restart']){const button=root.querySelector(`#${id}`);if(button)button.disabled=!ready;}
   const submitButton=root.querySelector('#submit-answer');
   if(submitButton)submitButton.disabled=!connected||pending||(pad?!pad.hasInk():!root.querySelector('#guess')?.value.trim());
-  if(pad)pad.locked=pending;
+  if(pad) {
+    pad.locked=pending;
+    root.querySelector('#undo').disabled=pending||!pad.strokes.length;
+    root.querySelector('#redo').disabled=pending||!pad.redoStrokes.length;
+    root.querySelector('#clear').disabled=pending||!pad.strokes.length;
+  }
   if(snapshot?.task&&pending){const status=root.querySelector('#submission-status');if(status)status.textContent='Đang gửi bài…';}
 }
 function updateClock() {
