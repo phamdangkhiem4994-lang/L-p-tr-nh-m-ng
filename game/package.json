@@ -1,0 +1,9 @@
+{
+  "name": "truyen-net",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"start": "node server/index.js", "test": "node --test test/*.test.js"},
+  "engines": {"node": ">=22"},
+  "dependencies": {"ws": "^8.18.0"}
+}

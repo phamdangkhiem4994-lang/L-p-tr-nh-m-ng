@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f3ea">
+  <meta name="description" content="TRUYỀN NÉT — mỗi người một câu, truyền hình và chữ qua từng vòng, rồi cùng mở từng bước bất ngờ.">
+  <title>TRUYỀN NÉT · Vẽ tiếp, vui thêm</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%237149bd'/%3E%3Cpath d='M9 26 25 10l5 5-16 16-6 1z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="/" aria-label="TRUYỀN NÉT — trang đầu">truyền nét<span aria-hidden="true">✳</span></a>
+    <div class="header-actions"><details class="sound-settings"><summary aria-label="Cài đặt âm thanh">♫ <span>Âm thanh</span></summary><div class="sound-panel"><button id="sound-toggle" type="button" class="button secondary" aria-pressed="true">♫ Âm thanh bật</button><label for="sound-volume">Âm lượng <output id="sound-value">35%</output></label><input id="sound-volume" type="range" min="0" max="100" value="35" step="5"><p>Hiệu ứng nhẹ cho lượt chơi. Tab đang ẩn sẽ im lặng.</p></div></details><span id="connection" role="status">Vẽ tiếp, vui thêm.</span><button id="leave" class="text-button" hidden>Rời phòng ↗</button></div>
+  </header>
+  <main id="app"></main>
+  <div id="notice" class="notice" role="alert" hidden></div>
+  <footer class="site-footer"><span>Mỗi nét vẽ, một bất ngờ.</span><span>3–8 người · Không cần biết vẽ</span></footer>
+  <script type="module" src="/client/app.js"></script>
+</body>
+</html>

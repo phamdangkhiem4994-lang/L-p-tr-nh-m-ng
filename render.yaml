@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: truyen-net
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    rootDir: game
+    buildCommand: npm install --omit=dev && npm test
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22
+      - key: HOST
+        value: 0.0.0.0
