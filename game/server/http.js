@@ -7,9 +7,9 @@ import { attachRealtime } from './realtime.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.ico':'image/x-icon'};
-function sameOrigin(req) {
+function originAllowed(req,allowedOrigins) {
   if(!req.headers.origin)return true;
-  try {const origin=new URL(req.headers.origin);return ['http:','https:'].includes(origin.protocol)&&origin.host===req.headers.host;}catch{return false;}
+  try {const origin=new URL(req.headers.origin);return ['http:','https:'].includes(origin.protocol)&&(origin.host===req.headers.host||allowedOrigins.has(origin.origin));}catch{return false;}
 }
 function json(res,status,body) {res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(body));}
 async function body(req) {
@@ -20,12 +20,28 @@ async function body(req) {
   catch {throw new GameError('Dữ liệu JSON không hợp lệ.');}
 }
 export function createGameServer(options={}) {
+  const allowedOrigins=new Set(options.allowedOrigins??(process.env.ALLOWED_ORIGINS??'').split(',').map(s=>s.trim()).filter(Boolean));
+  const sameOrigin=req=>originAllowed(req,allowedOrigins);
   const store=new GameStore(options),limits=new Map();let realtime;
   const server=createServer(async(req,res)=>{
     res.setHeader('x-content-type-options','nosniff');res.setHeader('referrer-policy','no-referrer');
     res.setHeader('content-security-policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     try {
       const url=new URL(req.url,'http://localhost');
+      if(url.pathname.startsWith('/api/')&&req.headers.origin) {
+        if(!sameOrigin(req))return json(res,403,{error:'Nguồn yêu cầu không hợp lệ.'});
+        res.setHeader('access-control-allow-origin',req.headers.origin);
+        res.setHeader('vary','Origin');
+        if(req.method==='OPTIONS') {
+          const headers=(req.headers['access-control-request-headers']??'').toLowerCase().split(',').map(h=>h.trim()).filter(Boolean);
+          if(req.headers['access-control-request-method']!=='POST'||headers.some(h=>h!=='content-type'))
+            return json(res,403,{error:'Yêu cầu không được hỗ trợ.'});
+          res.setHeader('access-control-allow-methods','POST');
+          res.setHeader('access-control-allow-headers','Content-Type');
+          res.setHeader('access-control-max-age','600');
+          res.writeHead(204);res.end();return;
+        }
+      }
       if(req.method==='GET' && url.pathname==='/api/health')return json(res,200,{ok:true});
       if(req.method==='POST' && url.pathname.startsWith('/api/')) {
         if(!sameOrigin(req))return json(res,403,{error:'Nguồn yêu cầu không hợp lệ.'});

@@ -17,3 +17,5 @@ services:
         value: 22
       - key: HOST
         value: 0.0.0.0
+      - key: ALLOWED_ORIGINS
+        value: https://phamdangkhiem4994-lang.github.io

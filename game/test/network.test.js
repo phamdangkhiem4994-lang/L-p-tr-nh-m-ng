@@ -12,8 +12,8 @@ async function post(url,path,body) {
   const res=await fetch(url+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();return {status:res.status,data};
 }
-async function connect(url,session) {
-  const ws=new WebSocket(url.replace('http','ws')+'/ws');
+async function connect(url,session,options) {
+  const ws=new WebSocket(url.replace('http','ws')+'/ws',options);
   const messages=[];const waiters=new Set();
   ws.on('message',raw=>{const m=JSON.parse(raw);messages.push(m);for(const w of [...waiters])w(m);});
   await new Promise((r,j)=>{ws.once('open',r);ws.once('error',j);});
@@ -88,4 +88,22 @@ test('lobby host kicks online and offline peers, revokes sessions and shares rou
  peers[0].send({type:'room.settings',turns:8});
  await Promise.all(peers.slice(0,3).map(p=>p.snapshot(s=>s.settings.turns===8)));
  peers[0].send({type:'game.start'});const s=await peers[2].snapshot(s=>s.phase==='writing');assert.equal(s.totalTurns,8);
+});
+
+test('GitHub Pages origin supports CORS preflight, room entry and WSS authentication; other origins are rejected',async t=>{
+ const origin='https://phamdangkhiem4994-lang.github.io';
+ const {url}=await launch(t,{allowedOrigins:[origin]});
+ const preflight=await fetch(url+'/api/rooms',{method:'OPTIONS',headers:{origin,'access-control-request-method':'POST','access-control-request-headers':'content-type'}});
+ assert.equal(preflight.status,204);assert.equal(preflight.headers.get('access-control-allow-origin'),origin);
+ const created=await fetch(url+'/api/rooms',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({name:'Pages player'})});
+ assert.equal(created.status,201);assert.equal(created.headers.get('access-control-allow-origin'),origin);
+ const session=await created.json(),peer=await connect(url,session,{origin});t.after(()=>peer.ws.terminate());
+ assert.equal((await peer.snapshot(s=>s.players[0].online)).players[0].name,'Pages player');
+ for(const bad of ['https://attacker.invalid',origin+'.attacker.invalid']){
+  const res=await fetch(url+'/api/rooms',{method:'OPTIONS',headers:{origin:bad,'access-control-request-method':'POST','access-control-request-headers':'content-type'}});
+  assert.equal(res.status,403);assert.equal(res.headers.get('access-control-allow-origin'),null);
+ }
+ const untrusted=new WebSocket(url.replace('http','ws')+'/ws',{origin:'https://attacker.invalid'});
+ const status=await new Promise((resolve,reject)=>{untrusted.once('unexpected-response',(req,res)=>{res.resume();resolve(res.statusCode);});untrusted.once('error',reject);});
+ assert.equal(status,403);untrusted.terminate();
 });

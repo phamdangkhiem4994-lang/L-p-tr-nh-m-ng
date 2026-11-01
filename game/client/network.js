@@ -1,3 +1,5 @@
+import {backendOrigin,websocketURL} from './endpoints.js';
+const apiOrigin=backendOrigin(location.href,document.querySelector('meta[name=game-api-origin]')?.content);
 const KEY = 'truyen-net.session.v1';
 export function readSession() {
   try {
@@ -9,7 +11,7 @@ export function saveSession(value) {
   try { value ? sessionStorage.setItem(KEY, JSON.stringify(value)) : sessionStorage.removeItem(KEY); } catch { /* Private mode can disable storage. */ }
 }
 export async function enterRoom(name, code) {
-  const response = await fetch(code ? `/api/rooms/${encodeURIComponent(code)}/join` : '/api/rooms', {
+  const response = await fetch(new URL(code ? `/api/rooms/${encodeURIComponent(code)}/join` : '/api/rooms',apiOrigin), {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
   });
   const data = await response.json().catch(() => ({}));
@@ -25,7 +27,7 @@ export class Connection {
   connect() {
     if (this.stopped) return;
     this.onStatus(this.attempt ? 'reconnecting' : 'connecting');
-    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+    const socket = new WebSocket(websocketURL(apiOrigin));
     this.socket = socket;
     socket.onopen = () => {
       if (this.stopped) return;

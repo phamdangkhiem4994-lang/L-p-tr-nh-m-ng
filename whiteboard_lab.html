@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chương 5 Lab: Multi-Client, Broadcast & MQTT Collaborative Whiteboard</title>
+  <!-- Nhúng thư viện MQTT.js qua CDN -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --bg-main: #0f172a;
+      --bg-card: #1e293b;
+      --accent-blue: #38bdf8;
+      --accent-green: #22c55e;
+      --accent-amber: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-color: #334155;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    body { background-color: var(--bg-main); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; }
+
+    header { background-color: rgba(30, 41, 59, 0.9); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-color); padding: 1rem 2rem; position: sticky; top: 0; z-index: 100; }
+    .header-title { font-size: 1.25rem; font-weight: 700; color: var(--accent-blue); display: flex; align-items: center; gap: 0.5rem; }
+    .header-sub { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; }
+
+    .nav-tabs { display: flex; gap: 0.5rem; background-color: var(--bg-main); padding: 0.75rem 2rem 0; border-bottom: 1px solid var(--border-color); overflow-x: auto; }
+    .tab-btn { background: none; border: none; color: var(--text-muted); padding: 0.75rem 1.25rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; white-space: nowrap; }
+    .tab-btn:hover { color: var(--text-main); }
+    .tab-btn.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); background-color: rgba(56, 189, 248, 0.05); border-radius: 6px 6px 0 0; }
+
+    main { flex: 1; padding: 1.5rem 2rem; max-width: 1500px; margin: 0 auto; width: 100%; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    .grid-sidebar { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; }
+    @media (max-width: 1000px) { .grid-2, .grid-sidebar { grid-template-columns: 1fr; } }
+
+    .card { background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem; }
+    .card-title { font-size: 1.05rem; font-weight: 600; color: var(--text-main); margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; }
+
+    .badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600; text-transform: uppercase; }
+    .badge-blue { background-color: rgba(56, 189, 248, 0.2); color: var(--accent-blue); }
+    .badge-green { background-color: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+    .badge-amber { background-color: rgba(245, 158, 11, 0.2); color: var(--accent-amber); }
+    .badge-purple { background-color: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
+
+    .btn { background-color: var(--accent-blue); color: #000; border: none; padding: 0.6rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; font-size: 0.875rem; width: 100%; margin-top: 0.5rem; }
+    .btn:hover { opacity: 0.9; }
+    .btn-danger { background-color: var(--accent-red); color: #fff; }
+
+    .canvas-container { background-color: #090d16; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.5rem; text-align: center; margin-bottom: 1rem; }
+
+    canvas.drawing-canvas { background-color: #ffffff; border-radius: 6px; cursor: crosshair; display: block; width: 100%; height: 480px; touch-action: none; }
+    .anim-canvas { display: block; width: 100%; max-width: 420px; height: 180px; margin: 0 auto; border-radius: 6px; }
+
+    .log-box { height: 150px; overflow-y: auto; background-color: #090d16; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem 0.75rem; font-family: monospace; font-size: 0.75rem; color: #38bdf8; }
+    .log-line { margin-bottom: 0.25rem; word-break: break-all; }
+
+    .client-list { max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+    .client-item { background-color: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.8rem; display: flex; align-items: center; justify-content: space-between; }
+
+    .chat-backdrop { position: fixed; inset: 0; z-index: 300; display: none; align-items: center; justify-content: center; padding: 1rem; background: rgba(2, 6, 23, 0.72); }
+    .chat-backdrop.open { display: flex; }
+    .chat-popup { display: flex; flex-direction: column; width: min(440px, 100%); max-height: min(620px, 85vh); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5); overflow: hidden; }
+    .chat-popup-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.1rem; border-bottom: 1px solid var(--border-color); }
+    .chat-popup-title { font-size: 1rem; font-weight: 700; }
+    .chat-close { border: 0; background: transparent; color: var(--text-muted); font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0.1rem 0.35rem; }
+    .chat-close:hover { color: var(--text-main); }
+    .chat-room-caption { padding: 0.5rem 1rem; color: var(--text-muted); font-size: 0.72rem; border-bottom: 1px solid var(--border-color); }
+    .chat-messages { min-height: 220px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.65rem; padding: 1rem; background: #0b1220; }
+    .chat-empty { margin: auto; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
+    .chat-message { max-width: 88%; align-self: flex-start; padding: 0.55rem 0.7rem; border: 1px solid var(--border-color); border-radius: 10px 10px 10px 2px; background: var(--bg-card); overflow-wrap: anywhere; }
+    .chat-message.mine { align-self: flex-end; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.12); border-radius: 10px 10px 2px 10px; }
+    .chat-message-meta { color: var(--accent-blue); font-size: 0.68rem; margin-bottom: 0.25rem; }
+    .chat-message-text { white-space: pre-wrap; font-size: 0.88rem; line-height: 1.4; }
+    .chat-status { min-height: 1rem; padding: 0 1rem 0.45rem; color: var(--text-muted); font-size: 0.72rem; }
+    .chat-form { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--border-color); }
+    .chat-input { min-width: 0; flex: 1; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.65rem 0.75rem; color: var(--text-main); background: #0f172a; font-size: 0.875rem; outline: none; }
+    .chat-input:focus { border-color: var(--accent-blue); }
+    .chat-send { width: auto; margin: 0; }
+
+    .game-card { border-color: rgba(168, 85, 247, 0.45); }
+    .game-status { color: var(--text-muted); font-size: 0.78rem; line-height: 1.45; margin-bottom: 0.65rem; }
+    .game-panel { border-top: 1px solid var(--border-color); margin-top: 0.75rem; padding-top: 0.75rem; }
+    .game-phase { color: var(--accent-purple); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; }
+    .game-timer { float: right; color: var(--accent-amber); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .game-task { clear: both; background: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.7rem; margin: 0.6rem 0; font-size: 0.82rem; line-height: 1.45; overflow-wrap: anywhere; }
+    .game-input { width: 100%; resize: vertical; min-height: 64px; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.6rem; color: var(--text-main); background: #0f172a; font-size: 0.85rem; }
+    .game-results { max-height: 320px; overflow-y: auto; margin-top: 0.7rem; }
+    .game-result { background: #0f172a; border: 1px solid var(--border-color); border-radius: 7px; padding: 0.65rem; margin-top: 0.55rem; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; }
+    .game-result canvas { display: block; width: 100%; max-width: 240px; height: 144px; margin: 0.45rem auto; background: white; border-radius: 4px; }
+
+    .color-picker { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+    .color-btn { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+    .color-btn.active { border-color: #fff; transform: scale(1.1); }
+
+    code.inline-code { background-color: #334155; color: var(--accent-blue); padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.8rem; }
+    .theory-text { font-size: 0.9rem; color: var(--text-muted); line-height: 1.7; margin-bottom: 0.75rem; }
+    .theory-list { margin-left: 1.25rem; font-size: 0.875rem; color: var(--text-muted); line-height: 1.6; margin-bottom: 1rem; }
+
+    .step-box { background-color: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+    .step-box h4 { color: var(--accent-blue); font-size: 0.95rem; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-title">🌐 Chương 5 Lab: Multi-Client, Broadcast & MQTT Architecture</div>
+    <div class="header-sub">Nền tảng học tập trực quan: Phân tích nguyên lý Broadcast/Multicast, MQTT Broker và Ứng dụng Bảng vẽ phân tán</div>
+  </header>
+
+  <nav class="nav-tabs">
+    <button class="tab-btn active" onclick="switchTab('tab1')">1. Mô Hình Unicast, Broadcast & Multicast</button>
+    <button class="tab-btn" onclick="switchTab('tab2')">2. Cơ chế Public MQTT Broker</button>
+    <button class="tab-btn" onclick="switchTab('tab3')">3. Phòng Lab: Whiteboard Phân Tán</button>
+    <button class="tab-btn" onclick="switchTab('tab4')">4. Phân Tích Gói Tin Bằng Wireshark</button>
+  </nav>
+
+  <main>
+    <!-- TAB 1: 3 MÔ HÌNH TRUYỀN THÔNG -->
+    <div id="tab1" class="tab-content active">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">
+            <span>1. Unicast (Điểm tới Điểm)</span>
+            <span class="badge badge-blue">1-to-1</span>
+          </div>
+          <div class="canvas-container">
+            <canvas id="unicastCanvas" class="anim-canvas" width="420" height="180"></canvas>
+          </div>
+          <p class="theory-text">Truyền dữ liệu trực tiếp giữa đúng một thiết bị nguồn và một thiết bị đích riêng biệt trong mạng.</p>
+          <ul class="theory-list">
+            <li><b>Đặc điểm:</b> Riêng tư cao, chiếm băng thông tuyến tính theo số kết nối.</li>
+            <li><b>Ứng dụng thực tế:</b> Duyệt web (HTTP/HTTPS), truyền file FTP.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>2. Broadcast (Phát Quãng Bá)</span>
+            <span class="badge badge-amber">1-to-All</span>
+          </div>
+          <div class="canvas-container">
+            <canvas id="broadcastCanvas" class="anim-canvas" width="420" height="180"></canvas>
+          </div>
+          <p class="theory-text">Gói tin phát tán đồng thời từ một nguồn tới tất cả các thiết bị trong cùng phân đoạn mạng LAN.</p>
+          <ul class="theory-list">
+            <li><b>Đặc điểm:</b> Dễ gây nghẽn mạng (Broadcast Storm) nếu lạm dụng.</li>
+            <li><b>Ứng dụng thực tế:</b> Phân giải địa chỉ MAC (ARP), cấp phát IP (DHCP Discover).</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>3. Multicast (Phát Nhóm)</span>
+          <span class="badge badge-purple">1-to-Many Group</span>
+        </div>
+        <div class="grid-2" style="align-items: center;">
+          <div class="canvas-container" style="margin-bottom: 0;">
+            <canvas id="multicastCanvas" class="anim-canvas" width="420" height="180"></canvas>
+          </div>
+          <div>
+            <p class="theory-text">Truyền thông tin tới một nhóm thiết bị cụ thể đã đăng ký tham gia (Joined Group) qua dải IP Class D.</p>
+            <ul class="theory-list">
+              <li><b>Đặc điểm:</b> Tiết kiệm băng thông tối đa, thiết bị ngoài nhóm tự động loại bỏ gói tin.</li>
+              <li><b>Ứng dụng thực tế:</b> Truyền hình trực tuyến IPTV, hội nghị truyền hình, định tuyến OSPF.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: CƠ CHẾ PUBLIC MQTT BROKER -->
+    <div id="tab2" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <span>Mô Phỏng Hoạt Họa: Publish / Subscribe qua MQTT Broker</span>
+          <button class="btn" style="width: auto; padding: 0.3rem 0.8rem; font-size: 0.75rem;" onclick="startMqttAnim()">Chạy Lại Hoạt Họa</button>
+        </div>
+        <div class="canvas-container">
+          <canvas id="mqttAnimCanvas" width="900" height="260" style="max-width: 900px; height: 260px;"></canvas>
+        </div>
+        <div id="mqttAnimText" style="text-align: center; font-size: 0.85rem; color: var(--accent-green); font-weight: 600;">
+          Đang khởi tạo mô phỏng MQTT Broker...
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">
+            <span>Kiến Trúc Publish / Subscribe (Pub/Sub)</span>
+            <span class="badge badge-blue">Decoupled Architecture</span>
+          </div>
+          <p class="theory-text">MQTT hoạt động dựa trên mô hình bất đồng bộ tách rời (Decoupled):</p>
+          <ul class="theory-list">
+            <li><b>Publisher:</b> Đẩy thông điệp gắn liền với một <i>Topic</i> lên Broker.</li>
+            <li><b>Subscriber:</b> Đăng ký lắng nghe các <i>Topic</i> quan tâm qua Broker.</li>
+            <li><b>Broker:</b> Nhận, lọc và định tuyến thông điệp từ Publisher đến đúng các Subscriber.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Ưu Điểm Của MQTT over WebSockets</span>
+            <span class="badge badge-green">Browser Friendly</span>
+          </div>
+          <p class="theory-text">Cho phép ứng dụng trình duyệt web kết nối mượt mà tới các Public Broker toàn cầu:</p>
+          <ul class="theory-list">
+            <li><b>Header siêu nhỏ:</b> Gói tin điều khiển tối ưu hóa băng thông.</li>
+            <li><b>Xuyên tường lửa:</b> Hoạt động ổn định trên cổng bảo mật chuẩn (<code class="inline-code">wss://</code>).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: PHÒNG LAB WHITEBOARD PHÂN TÁN -->
+    <div id="tab3" class="tab-content">
+      <div class="grid-sidebar">
+        <div>
+          <div class="card">
+            <div class="card-title">
+              <span>Trạng Thái Kết Nối MQTT</span>
+              <span id="connStatus" class="badge badge-amber">Đang kết nối...</span>
+            </div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+              Broker: <code class="inline-code">broker.hivemq.com:8884</code>
+            </p>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">
+              Mã nhận diện Client: <strong id="myClientId" style="color: var(--accent-blue);">--</strong>
+            </p>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">
+              Phòng riêng trên trình duyệt này: <strong id="myRoomId" style="color: var(--accent-blue);">--</strong>
+            </p>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.6rem;">
+              <input id="roomIdInput" type="text" maxlength="32" placeholder="Dán mã phòng 32 ký tự" aria-label="Mã phòng muốn tham gia" style="min-width: 0; flex: 1;">
+              <button type="button" onclick="joinRoom()">Vào phòng</button>
+            </div>
+            <p id="roomHelp" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.35rem;">
+              Gửi mã phòng phía trên cho 2 người kia; họ cần mở cùng bản ứng dụng và nhập mã này.
+            </p>
+          </div>
+
+          <div class="card game-card">
+            <div class="card-title">
+              <span>🎨 Thử thách chuyền hình</span>
+              <span class="badge badge-purple">Party</span>
+            </div>
+            <p id="gameStatus" class="game-status">Cần ít nhất 3 người trong phòng để bắt đầu. Mỗi ván gồm viết câu, vẽ và đoán.</p>
+            <button id="startGameButton" class="btn" type="button" onclick="startGame()">Bắt đầu thử thách</button>
+            <div id="gamePanel" class="game-panel" hidden>
+              <span id="gamePhase" class="game-phase"></span>
+              <span id="gameTimer" class="game-timer"></span>
+              <div id="gameTask" class="game-task"></div>
+              <form id="gameTextForm" onsubmit="submitGameText(event)" hidden>
+                <textarea id="gameTextInput" class="game-input" maxlength="160" placeholder="Nhập câu ngắn..."></textarea>
+                <button id="gameTextSubmit" class="btn" type="submit">Gửi</button>
+              </form>
+              <button id="gameDrawingSubmit" class="btn" type="button" onclick="submitGameDrawing()" hidden>Gửi hình vẽ</button>
+              <div id="gameResults" class="game-results" hidden></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>Danh Sách Client Trực Tuyến</span>
+              <span id="clientCountBadge" class="badge badge-blue">0 Online</span>
+            </div>
+            <div class="client-list" id="clientListContainer">
+              <div style="font-size: 0.8rem; color: var(--text-muted); text-align: center; padding: 1rem;">Đang đồng bộ danh sách...</div>
+            </div>
+            <button class="btn" type="button" onclick="openChat()">💬 Mở chat phòng</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><span>Công Cụ Vẽ</span></div>
+            <div style="margin-bottom: 0.75rem;">
+              <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Màu sắc nét cọ:</label>
+              <div class="color-picker">
+                <div class="color-btn active" style="background-color: #0f172a;" onclick="setColor('#0f172a', this)"></div>
+                <div class="color-btn" style="background-color: #ef4444;" onclick="setColor('#ef4444', this)"></div>
+                <div class="color-btn" style="background-color: #22c55e;" onclick="setColor('#22c55e', this)"></div>
+                <div class="color-btn" style="background-color: #38bdf8;" onclick="setColor('#38bdf8', this)"></div>
+              </div>
+            </div>
+            <div style="margin-bottom: 1rem;">
+              <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Độ dày: <span id="sizeVal">4</span>px</label>
+              <input type="range" id="brushSize" min="1" max="20" value="4" style="width: 100%; accent-color: var(--accent-blue);" oninput="document.getElementById('sizeVal').textContent=this.value">
+            </div>
+            <div style="margin-bottom: 12px;">
+  <label for="customPenColor">Chọn màu bất kỳ:</label>
+
+  <input type="color"
+    id="customPenColor"
+    value="#0f172a"
+    oninput="chooseCustomColor(this.value)">
+
+  <button type="button"
+    id="penToolButton"
+    class="btn"
+    onclick="usePenTool()">
+    ✏️ Bút vẽ
+  </button>
+
+  <button type="button"
+    id="eraserToolButton"
+    class="btn"
+    onclick="useEraserTool()">
+    🧽 Cục tẩy
+  </button>
+
+  <small id="drawingToolStatus"
+    style="display: block; margin-top: 8px;">
+    Đang dùng: Bút vẽ
+  </small>
+</div>
+            <button class="btn btn-danger" onclick="clearBoard()">Xóa Sạch Bảng Chung</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><span>Nhật Ký Thao Tác & Mạng</span></div>
+            <div class="log-box" id="netLogs"></div>
+          </div>
+        </div>
+
+        <div class="card" style="display: flex; flex-direction: column;">
+          <div class="card-title">
+            <span>Bảng Vẽ Phân Tán (Hỗ trợ PC & Điện thoại cuộn trang)</span>
+            <span class="badge badge-green">Optimized Touch</span>
+          </div>
+          <div class="canvas-container" style="flex: 1; margin-bottom: 0;">
+            <canvas id="whiteboard" class="drawing-canvas" width="1000" height="600" style="height: 560px;"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: PHÂN TÍCH GÓI TIN BẰNG WIRESHARK (MỚI BỔ SUNG) -->
+    <div id="tab4" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <span>Hướng Dẫn Phân Tích & Bắt Gói Tin MQTT Broker Bằng Wireshark</span>
+          <span class="badge badge-green">Network Forensics</span>
+        </div>
+        <p class="theory-text">
+          Vì ứng dụng chạy trên giao thức <b>MQTT over WebSockets (<code class="inline-code">wss://</code> - cổng 8884)</b>, toàn bộ gói tin MQTT sẽ được đóng gói bên trong lớp bảo mật TLS/SSL mã hóa và lớp giao vận TCP. Dưới đây là quy trình chuẩn xác để sinh viên bắt và đọc gói tin trên Wireshark hoặc công cụ tương đương (như <i>TCP Dumump</i> hoặc <i>Browser Developer Tools</i>):
+        </p>
+
+        <div class="step-box">
+          <h4>Bước 1: Thiết lập bộ lọc (Display Filter) trên Wireshark</h4>
+          <p class="theory-text" style="margin-bottom: 0.5rem;">
+            Do cổng kết nối tới broker công cộng là <code class="inline-code">8884</code> và chạy mã hóa TLS, bạn hãy nhập các bộ lọc sau vào thanh Filter:
+          </p>
+          <ul class="theory-list" style="margin-bottom: 0;">
+            <li>Lọc theo cổng TCP: <code class="inline-code">tcp.port == 8884</code></li>
+            <li>Lọc theo giao thức WebSocket thô trước khi mã hóa (nếu bắt ở môi trường local): <code class="inline-code">websocket</code> hoặc <code class="inline-code">tls</code></li>
+          </ul>
+        </div>
+
+        <div class="step-box">
+          <h4>Bước 2: Nhận diện các giai đoạn gói tin mạng</h4>
+          <ul class="theory-list" style="margin-bottom: 0;">
+            <li><b>TCP 3-Way Handshake:</b> Các gói tin <code class="inline-code">SYN</code>, <code class="inline-code">SYN-ACK</code>, <code class="inline-code">ACK</code> thiết lập kết nối giữa trình duyệt và <code class="inline-code">broker.hivemq.com</code>.</li>
+            <li><b>TLS Handshake (Client Hello / Server Hello):</b> Quá trình bắt tay bảo mật để trao đổi khóa mã hóa phiên truyền thông (vì dùng giao thức <code class="inline-code">wss://</code>).</li>
+            <li><b>WebSocket Frame / MQTT Payload:</b> Khi bạn thực hiện vẽ trên Tab 3, các gói tin dữ liệu chuyển động qua lại dạng khung WebSocket chứa nội dung JSON của MQTT Publish.</li>
+          </ul>
+        </div>
+
+        <div class="step-box">
+          <h4>Công cụ thay thế tuyệt vời: Trình duyệt Developer Tools (F12)</h4>
+          <p class="theory-text" style="margin-bottom: 0.5rem;">
+            Vì Wireshark phải giải mã lớp TLS khá phức tạp, bạn có thể hướng dẫn sinh viên dùng ngay tính năng có sẵn trên trình duyệt để soi trực tiếp nội dung gói tin MQTT mà không sợ bị mã hóa:
+          </p>
+          <ol class="theory-list" style="margin-bottom: 0;">
+            <li>Mở trình duyệt web, nhấn <b>F12</b> (hoặc chuột phải chọn <i>Inspect</i>).</li>
+            <li>Chuyển qua tab <b>Network</b> $\rightarrow$ chọn bộ lọc <b>WS</b> (WebSocket).</li>
+            <li>Nhấn vào kết nối đang chạy tên là <code class="inline-code">mqtt</code> hoặc kết nối đến cổng <code class="inline-code">8884</code>.</li>
+            <li>Chọn tab phụ <b>Messages</b>: Sinh viên sẽ nhìn thấy rõ mồn một từng gói tin <code class="inline-code">Send</code> và <code class="inline-code">Receive</code> chứa tọa độ JSON của nét vẽ truyền qua lại với MQTT Broker theo thời gian thực!</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="chatBackdrop" class="chat-backdrop" aria-hidden="true" onclick="if (event.target === this) closeChat()">
+    <section class="chat-popup" role="dialog" aria-modal="true" aria-labelledby="chatTitle">
+      <div class="chat-popup-header">
+        <div id="chatTitle" class="chat-popup-title">💬 Chat phòng</div>
+        <button class="chat-close" type="button" aria-label="Đóng chat" onclick="closeChat()">&times;</button>
+      </div>
+      <div class="chat-room-caption">Phòng <strong id="chatRoomLabel">--</strong></div>
+      <div id="chatMessages" class="chat-messages" aria-live="polite">
+        <div class="chat-empty">Chưa có tin nhắn. Bắt đầu trò chuyện nhé!</div>
+      </div>
+      <div id="chatStatus" class="chat-status" aria-live="polite"></div>
+      <form class="chat-form" onsubmit="sendChatMessage(event)">
+        <input id="chatInput" class="chat-input" type="text" maxlength="500" autocomplete="off" placeholder="Nhập tin nhắn..." aria-label="Tin nhắn">
+        <button class="btn chat-send" type="submit">Gửi</button>
+      </form>
+    </section>
+  </div>
+
+  <script>
+    // --- TAB SWITCHING ---
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+      event.currentTarget.classList.add('active');
+
+      if (tabId === 'tab1') {
+        startUnicastAnim();
+        startBroadcastAnim();
+        startMulticastAnim();
+      }
+      if (tabId === 'tab2') startMqttAnim();
+    }
+
+    // --- ANIMATION 1: UNICAST ---
+    let unicastId = null;
+    function startUnicastAnim() {
+      const canvas = document.getElementById('unicastCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      let pos = 0;
+      if (unicastId) cancelAnimationFrame(unicastId);
+
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        pos = (pos + 2) % 280;
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
+        ctx.fillRect(20, 70, 70, 40); ctx.strokeRect(20, 70, 70, 40);
+        ctx.fillStyle = '#f8fafc'; ctx.font = '10px sans-serif'; ctx.fillText('Nguồn', 38, 95);
+
+        ctx.fillRect(330, 70, 70, 40); ctx.strokeRect(330, 70, 70, 40);
+        ctx.fillText('Đích', 352, 95);
+
+        ctx.beginPath(); ctx.moveTo(90, 90); ctx.lineTo(330, 90);
+        ctx.strokeStyle = '#334155'; ctx.lineWidth = 2; ctx.stroke();
+
+        let pX = 90 + pos;
+        if (pX <= 330) {
+          ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.arc(pX, 90, 7, 0, Math.PI * 2); ctx.fill();
+        }
+
+        unicastId = requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    // --- ANIMATION 2: BROADCAST ---
+    let broadcastId = null;
+    function startBroadcastAnim() {
+      const canvas = document.getElementById('broadcastCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      let step = 0;
+      if (broadcastId) cancelAnimationFrame(broadcastId);
+
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        step = (step + 1) % 120;
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
+        ctx.fillRect(20, 70, 70, 40); ctx.strokeRect(20, 70, 70, 40);
+        ctx.fillStyle = '#f8fafc'; ctx.font = '10px sans-serif'; ctx.fillText('Nguồn', 38, 95);
+
+        const targets = [{x: 330, y: 20}, {x: 330, y: 90}, {x: 330, y: 140}];
+        targets.forEach(t => {
+          ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#22c55e';
+          ctx.fillRect(t.x, t.y, 70, 30); ctx.strokeRect(t.x, t.y, 70, 30);
+          ctx.fillStyle = '#f8fafc'; ctx.fillText('Nhận', t.x + 22, t.y + 20);
+        });
+
+        let radius = (step * 3) % 320;
+        ctx.beginPath();
+        ctx.arc(55, 90, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(245, 158, 11, ${Math.max(0, 1 - radius / 320)})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        broadcastId = requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    // --- ANIMATION 3: MULTICAST ---
+    let multicastId = null;
+    function startMulticastAnim() {
+      const canvas = document.getElementById('multicastCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      let pos = 0;
+      if (multicastId) cancelAnimationFrame(multicastId);
+
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        pos = (pos + 2) % 260;
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 2;
+        ctx.fillRect(30, 70, 70, 40); ctx.strokeRect(30, 70, 70, 40);
+        ctx.fillStyle = '#f8fafc'; ctx.font = '10px sans-serif'; ctx.fillText('Nguồn', 48, 95);
+
+        const receivers = [
+          {x: 320, y: 20, inGroup: true},
+          {x: 320, y: 75, inGroup: false},
+          {x: 320, y: 130, inGroup: true}
+        ];
+
+        receivers.forEach(r => {
+          ctx.fillStyle = '#1e293b'; ctx.strokeStyle = r.inGroup ? '#22c55e' : '#64748b';
+          ctx.fillRect(r.x, r.y, 70, 30); ctx.strokeRect(r.x, r.y, 70, 30);
+          ctx.fillStyle = '#f8fafc'; ctx.fillText(r.inGroup ? 'Thành viên' : 'Ngoài nhóm', r.x + 5, r.y + 20);
+
+          if (r.inGroup) {
+            ctx.beginPath(); ctx.moveTo(100, 90); ctx.lineTo(320, r.y + 15);
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)'; ctx.lineWidth = 2; ctx.stroke();
+          }
+        });
+
+        let pX = 100 + pos;
+        if (pX <= 320) {
+          ctx.fillStyle = '#a855f7'; ctx.beginPath(); ctx.arc(pX, 90, 7, 0, Math.PI * 2); ctx.fill();
+        }
+
+        multicastId = requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    // --- ANIMATION 4: MQTT ---
+    let mqttAnimId = null;
+    function startMqttAnim() {
+      const canvas = document.getElementById('mqttAnimCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      let pos = 0;
+      if (mqttAnimId) cancelAnimationFrame(mqttAnimId);
+
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        pos = (pos + 2) % 300;
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
+        ctx.fillRect(50, 105, 110, 50); ctx.strokeRect(50, 105, 110, 50);
+        ctx.fillStyle = '#f8fafc'; ctx.font = 'bold 12px sans-serif'; ctx.fillText('PUBLISHER', 65, 135);
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 2;
+        ctx.fillRect(395, 90, 110, 80); ctx.strokeRect(395, 90, 110, 80);
+        ctx.fillStyle = '#f8fafc'; ctx.font = 'bold 12px sans-serif'; ctx.fillText('MQTT BROKER', 405, 135);
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2;
+        ctx.fillRect(740, 50, 110, 50); ctx.strokeRect(740, 50, 110, 50);
+        ctx.fillStyle = '#f8fafc'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('SUBSCRIBER 1', 750, 80);
+
+        ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2;
+        ctx.fillRect(740, 160, 110, 50); ctx.strokeRect(740, 160, 110, 50);
+        ctx.fillStyle = '#f8fafc'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('SUBSCRIBER 2', 750, 190);
+
+        let p1X = 160 + pos;
+        if (p1X <= 395) {
+          ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.arc(p1X, 130, 8, 0, Math.PI * 2); ctx.fill();
+        }
+
+        let p2X = 505 + pos;
+        if (p2X <= 740) {
+          ctx.fillStyle = '#a855f7'; ctx.beginPath(); ctx.arc(p2X, 75, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#a855f7'; ctx.beginPath(); ctx.arc(p2X, 185, 8, 0, Math.PI * 2); ctx.fill();
+        }
+
+        document.getElementById('mqttAnimText').textContent = "Mô phỏng MQTT Pub/Sub: Publisher gửi tin lên Broker $\rightarrow$ Broker phân phối xuống các Subscribers.";
+        mqttAnimId = requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    // --- TAB 3: WHITEBOARD & TOUCH FIX ---
+    const canvas = document.getElementById('whiteboard');
+    const ctx = canvas.getContext('2d');
+    let painting = false;
+    let currentColor = '#0f172a';
+    let lastX = 0, lastY = 0;
+
+    const myId = 'Client_' + Math.floor(Math.random() * 9000 + 1000);
+    document.getElementById('myClientId').textContent = myId;
+
+// Mỗi trình duyệt tạo một phòng riêng và giữ mã phòng qua các lần tải lại.
+    // Nhờ vậy bản clone không dùng chung bảng vẽ/danh sách client với trang gốc.
+    function getOrCreateRoomId() {
+      const storageKey = 'multiClientBroadcast.roomId';
+      try {
+        let roomId = localStorage.getItem(storageKey);
+        if (!roomId) {
+          const bytes = new Uint8Array(16);
+          crypto.getRandomValues(bytes);
+          roomId = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+          localStorage.setItem(storageKey, roomId);
+        }
+        return roomId;
+      } catch (e) {
+        // Fallback khi trình duyệt chặn localStorage (ví dụ một số chế độ file://).
+        return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+      }
+    }
+
+    let roomId = getOrCreateRoomId();
+    let roomTopic;
+    let topicName;
+    let presenceTopic;
+    let chatTopic;
+    let gameTopic;
+    let gameState = null;
+    let myGameStrokes = [];
+    let myGameSubmitted = false;
+    const gameWriteDuration = 30000;
+    const gamePhaseDuration = 60000;
+    const maxGameStrokes = 800;
+
+    function setRoomTopics() {
+      roomTopic = `netprog/private/${roomId}/whiteboard`;
+      topicName = `${roomTopic}/draw`;
+      presenceTopic = `${roomTopic}/presence`;
+      chatTopic = `netprog/private/${roomId}/chat`;
+      gameTopic = `netprog/private/${roomId}/game`;
+      document.getElementById('myRoomId').textContent = roomId;
+      document.getElementById('roomIdInput').value = roomId;
+      document.getElementById('chatRoomLabel').textContent = roomId.slice(0, 8);
+    }
+
+    setRoomTopics();
+
+    function joinRoom() {
+      const requestedRoom = document.getElementById('roomIdInput').value.trim().toLowerCase();
+      const help = document.getElementById('roomHelp');
+      if (!/^[a-f0-9]{32}$/.test(requestedRoom)) {
+        help.textContent = 'Mã phòng không hợp lệ. Hãy nhập đủ 32 ký tự trong mã phòng được chia sẻ.';
+        help.style.color = 'var(--accent-red)';
+        return;
+      }
+
+      if (requestedRoom === roomId) {
+        help.textContent = 'Bạn đang ở phòng này rồi. Gửi mã phía trên cho hai người kia.';
+        help.style.color = 'var(--text-muted)';
+        return;
+      }
+
+      const oldTopics = [topicName, presenceTopic, chatTopic, gameTopic];
+      roomId = requestedRoom;
+      try { localStorage.setItem('multiClientBroadcast.roomId', roomId); } catch (e) {}
+      setRoomTopics();
+      activeClients.clear();
+      activeClients.set(myId, { id: myId, status: 'Đang hoạt động', lastSeen: Date.now() });
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      updateClientListUI();
+      clearChatMessages('Bạn đã chuyển sang phòng mới.');
+      resetGame('Đã chuyển phòng. Bắt đầu ván mới khi đủ người.');
+      help.textContent = 'Đã chuyển phòng. Chia sẻ mã này với những người muốn cùng vẽ.';
+      help.style.color = 'var(--accent-green)';
+
+      if (client.connected) {
+        client.unsubscribe(oldTopics, () => {
+          client.subscribe([topicName, presenceTopic, chatTopic, gameTopic], (err) => {
+            if (!err) {
+              client.publish(presenceTopic, JSON.stringify({ id: myId, status: 'Active' }));
+              document.getElementById('chatStatus').textContent = 'Đã vào phòng chat.';
+            }
+          });
+        });
+      }
+    }
+
+    const activeClients = new Map();
+    activeClients.set(myId, { id: myId, status: 'Đang hoạt động', lastSeen: Date.now() });
+
+    function logNet(msg) {
+      const logs = document.getElementById('netLogs');
+      const time = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.innerHTML = `[${time}] ${msg}`;
+      logs.appendChild(line);
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    function updateClientListUI() {
+      const container = document.getElementById('clientListContainer');
+      container.innerHTML = '';
+      document.getElementById('clientCountBadge').textContent = `${activeClients.size} Online`;
+
+      activeClients.forEach((client, id) => {
+        const item = document.createElement('div');
+        item.className = 'client-item';
+        item.innerHTML = `
+          <span><b>${id}</b> ${id === myId ? '(Bạn)' : ''}</span>
+          <span class="badge badge-green">${client.status}</span>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function openChat() {
+      const backdrop = document.getElementById('chatBackdrop');
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      document.getElementById('chatInput').focus();
+    }
+
+    function closeChat() {
+      const backdrop = document.getElementById('chatBackdrop');
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden', 'true');
+    }
+
+    function clearChatMessages(note) {
+      const messages = document.getElementById('chatMessages');
+      messages.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'chat-empty';
+      empty.textContent = note || 'Chưa có tin nhắn. Bắt đầu trò chuyện nhé!';
+      messages.appendChild(empty);
+    }
+
+    function appendChatMessage(data) {
+      if (!data || typeof data.text !== 'string' || typeof data.sender !== 'string') return;
+      const text = data.text.trim().slice(0, 500);
+      if (!text) return;
+
+      const messages = document.getElementById('chatMessages');
+      messages.querySelector('.chat-empty')?.remove();
+      const item = document.createElement('article');
+      item.className = `chat-message${data.sender === myId ? ' mine' : ''}`;
+      const meta = document.createElement('div');
+      meta.className = 'chat-message-meta';
+      const timestamp = Number.isFinite(data.sentAt) ? new Date(data.sentAt) : new Date();
+      meta.textContent = `${data.sender === myId ? 'Bạn' : data.sender} · ${timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      const body = document.createElement('p');
+      body.className = 'chat-message-text';
+      body.textContent = text;
+      item.append(meta, body);
+      messages.appendChild(item);
+      while (messages.querySelectorAll('.chat-message').length > 100) {
+        messages.querySelector('.chat-message')?.remove();
+      }
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function sendChatMessage(event) {
+      event.preventDefault();
+      const input = document.getElementById('chatInput');
+      const status = document.getElementById('chatStatus');
+      const text = input.value.trim();
+      if (!text) return;
+      if (!client.connected) {
+        status.textContent = 'Chưa kết nối tới broker. Tin nhắn chưa được gửi.';
+        return;
+      }
+
+      const message = { type: 'chat', sender: myId, text: text.slice(0, 500), sentAt: Date.now() };
+      client.publish(chatTopic, JSON.stringify(message), { qos: 0 }, (err) => {
+        if (err) {
+          status.textContent = 'Gửi tin nhắn thất bại. Thử lại nhé.';
+          return;
+        }
+        appendChatMessage(message);
+        input.value = '';
+        status.textContent = '';
+      });
+    }
+
+    function createGameId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function publishGameMessage(message) {
+      if (!client.connected) return false;
+      client.publish(gameTopic, JSON.stringify({ ...message, sender: myId }), { qos: 0 });
+      return true;
+    }
+
+    function startGame() {
+      const status = document.getElementById('gameStatus');
+      if (!client.connected) {
+        status.textContent = 'Đang chờ kết nối MQTT để bắt đầu ván.';
+        return;
+      }
+      if (gameState && gameState.phase !== 'reveal') {
+        status.textContent = `Ván hiện tại do ${gameState.hostId} điều khiển.`;
+        return;
+      }
+
+      const now = Date.now();
+      const players = Array.from(activeClients.values())
+        .filter(player => player.id === myId || now - player.lastSeen <= 8000)
+        .map(player => player.id);
+      if (!players.includes(myId)) players.push(myId);
+      players.sort();
+      if (players.length < 3) {
+        status.textContent = `Cần ít nhất 3 người online; hiện có ${players.length}.`;
+        return;
+      }
+
+      const startMessage = {
+        type: 'game_start',
+        gameId: createGameId(),
+        hostId: myId,
+        players,
+        deadline: Date.now() + gameWriteDuration
+      };
+      acceptGameStart({ ...startMessage, sender: myId });
+      publishGameMessage(startMessage);
+    }
+
+    function acceptGameStart(message) {
+      const players = Array.isArray(message.players)
+        ? message.players.filter(id => typeof id === 'string').slice(0, 20)
+        : [];
+      if (message.sender !== message.hostId || players.length < 3 || !players.includes(message.hostId) || !players.includes(myId)) return;
+      if (gameState && gameState.phase !== 'reveal') return;
+
+      gameState = {
+        gameId: message.gameId,
+        hostId: message.hostId,
+        players,
+        phase: 'write',
+        phasePlayers: [...players],
+        deadline: message.deadline,
+        prompts: {},
+        drawings: {},
+        guesses: {},
+        assignments: {},
+        drawingSources: {}
+      };
+      myGameStrokes = [];
+      myGameSubmitted = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderGameUI('write');
+    }
+
+    function sanitizeGameStrokes(strokes) {
+      if (!Array.isArray(strokes)) return [];
+      return strokes.slice(0, maxGameStrokes).filter(stroke =>
+        stroke && [stroke.x1, stroke.y1, stroke.x2, stroke.y2, Number(stroke.size)].every(Number.isFinite) &&
+        typeof stroke.color === 'string' && (/^#[0-9a-f]{6}$/i.test(stroke.color) || stroke.color === '__eraser__')
+      ).map(stroke => ({
+        x1: Math.max(0, Math.min(canvas.width, stroke.x1)),
+        y1: Math.max(0, Math.min(canvas.height, stroke.y1)),
+        x2: Math.max(0, Math.min(canvas.width, stroke.x2)),
+        y2: Math.max(0, Math.min(canvas.height, stroke.y2)),
+        color: stroke.color,
+        size: Math.max(1, Math.min(20, Number(stroke.size)))
+      }));
+    }
+
+    function recordGameAnswer(message) {
+      if (!gameState || message.gameId !== gameState.gameId || !gameState.phasePlayers.includes(message.sender)) return;
+      if (message.kind === 'prompt' && gameState.phase === 'write') {
+        if (typeof message.text === 'string') gameState.prompts[message.sender] = message.text.trim().slice(0, 160);
+      } else if (message.kind === 'drawing' && gameState.phase === 'draw') {
+        gameState.drawings[message.sender] = sanitizeGameStrokes(message.strokes);
+      } else if (message.kind === 'guess' && gameState.phase === 'guess') {
+        if (typeof message.text === 'string') gameState.guesses[message.sender] = message.text.trim().slice(0, 160);
+      } else {
+        return;
+      }
+
+      if (myId === gameState.hostId) advanceGameWhenReady();
+    }
+
+    function advanceGameWhenReady() {
+      if (!gameState || myId !== gameState.hostId) return;
+      const answers = gameState.phase === 'write' ? gameState.prompts
+        : gameState.phase === 'draw' ? gameState.drawings
+        : gameState.phase === 'guess' ? gameState.guesses
+        : null;
+      if (answers && gameState.phasePlayers.every(id => Object.prototype.hasOwnProperty.call(answers, id))) {
+        advanceGamePhase();
+      }
+    }
+
+    function advanceGamePhase() {
+      if (!gameState || myId !== gameState.hostId) return;
+      const { players, gameId } = gameState;
+      let phaseMessage;
+
+      if (gameState.phase === 'write') {
+        const promptOwners = players.filter(id => typeof gameState.prompts[id] === 'string' && gameState.prompts[id].trim());
+        if (promptOwners.length === 0) {
+          const reason = 'Không ai gửi câu trong 30 giây. Ván đã kết thúc, bảng vẽ đã mở lại.';
+          publishGameMessage({ type: 'game_cancel', gameId, reason });
+          resetGame(reason);
+          return;
+        }
+        const assignments = {};
+        promptOwners.forEach(promptOwner => {
+          const promptIndex = players.indexOf(promptOwner);
+          const drawer = players[(promptIndex + 1) % players.length];
+          assignments[drawer] = { sourcePlayer: promptOwner, text: gameState.prompts[promptOwner] };
+        });
+        phaseMessage = { phase: 'draw', assignments, prompts: gameState.prompts };
+      } else if (gameState.phase === 'draw') {
+        const assignments = {};
+        Object.keys(gameState.drawingSources).forEach(drawer => {
+          const drawerIndex = players.indexOf(drawer);
+          const guesser = players[(drawerIndex + 1) % players.length];
+          assignments[guesser] = drawer;
+        });
+        phaseMessage = { phase: 'guess', assignments, prompts: gameState.prompts, drawings: gameState.drawings, drawingSources: gameState.drawingSources };
+      } else if (gameState.phase === 'guess') {
+        gameState.phasePlayers.forEach(id => { if (!gameState.guesses[id]) gameState.guesses[id] = '(Không kịp đoán)'; });
+        phaseMessage = { phase: 'reveal', prompts: gameState.prompts, drawings: gameState.drawings, guesses: gameState.guesses, drawingSources: gameState.drawingSources };
+      } else {
+        return;
+      }
+
+      phaseMessage.type = 'game_phase';
+      phaseMessage.gameId = gameId;
+      phaseMessage.deadline = phaseMessage.phase === 'reveal' ? 0 : Date.now() + gamePhaseDuration;
+      phaseMessage.sender = myId;
+      applyGamePhase(phaseMessage);
+      publishGameMessage(phaseMessage);
+    }
+
+    function applyGamePhase(message) {
+      if (!gameState || message.gameId !== gameState.gameId || message.sender !== gameState.hostId) return;
+      if (!['draw', 'guess', 'reveal'].includes(message.phase)) return;
+
+      gameState.phase = message.phase;
+      gameState.deadline = message.deadline;
+      gameState.assignments = message.assignments || {};
+      gameState.phasePlayers = ['draw', 'guess'].includes(message.phase) ? Object.keys(gameState.assignments) : [];
+      if (message.prompts) gameState.prompts = message.prompts;
+      if (message.drawings) gameState.drawings = message.drawings;
+      if (message.guesses) gameState.guesses = message.guesses;
+      if (message.drawingSources) gameState.drawingSources = message.drawingSources;
+      myGameSubmitted = false;
+      document.getElementById('gameTextInput').value = '';
+      painting = false;
+
+      if (message.phase === 'draw') {
+        myGameStrokes = [];
+        gameState.drawingSources = Object.fromEntries(Object.entries(gameState.assignments)
+          .map(([drawer, assignment]) => [drawer, assignment?.sourcePlayer])
+          .filter(([, sourcePlayer]) => Boolean(sourcePlayer)));
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      } else if (message.phase === 'guess') {
+        const drawer = gameState.assignments[myId];
+        if (drawer) drawGameOnMainCanvas(gameState.drawings[drawer] || []);
+        else ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      renderGameUI(message.phase);
+    }
+
+    function drawGameOnMainCanvas(strokes) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      sanitizeGameStrokes(strokes).forEach(stroke => {
+        drawLine(stroke.x1, stroke.y1, stroke.x2, stroke.y2, stroke.color, stroke.size);
+      });
+    }
+
+    function drawGameOnMiniCanvas(targetCanvas, strokes) {
+      const targetCtx = targetCanvas.getContext('2d');
+      const scaleX = targetCanvas.width / canvas.width;
+      const scaleY = targetCanvas.height / canvas.height;
+      targetCtx.fillStyle = '#ffffff';
+      targetCtx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+      sanitizeGameStrokes(strokes).forEach(stroke => {
+        targetCtx.save();
+        if (stroke.color === '__eraser__') {
+          targetCtx.globalCompositeOperation = 'destination-out';
+          targetCtx.strokeStyle = '#000000';
+        } else {
+          targetCtx.strokeStyle = stroke.color;
+        }
+        targetCtx.lineWidth = Math.max(1, stroke.size * scaleX);
+        targetCtx.lineCap = 'round';
+        targetCtx.beginPath();
+        targetCtx.moveTo(stroke.x1 * scaleX, stroke.y1 * scaleY);
+        targetCtx.lineTo(stroke.x2 * scaleX, stroke.y2 * scaleY);
+        targetCtx.stroke();
+        targetCtx.restore();
+      });
+    }
+
+    function renderGameUI(phase) {
+      const panel = document.getElementById('gamePanel');
+      const status = document.getElementById('gameStatus');
+      const startButton = document.getElementById('startGameButton');
+      const textForm = document.getElementById('gameTextForm');
+      const drawingButton = document.getElementById('gameDrawingSubmit');
+      const results = document.getElementById('gameResults');
+      const task = document.getElementById('gameTask');
+      panel.hidden = !gameState;
+      if (!gameState) {
+        startButton.disabled = false;
+        return;
+      }
+
+      const active = phase !== 'reveal';
+      startButton.disabled = active;
+      startButton.textContent = phase === 'reveal' ? 'Chơi ván mới' : 'Đang chơi...';
+      const phaseDurationLabel = phase === 'write' ? '30 giây viết câu' : phase === 'reveal' ? 'Ván đã hoàn tất' : '60 giây mỗi lượt';
+      status.textContent = `Host: ${gameState.hostId} · ${gameState.players.length} người · ${phaseDurationLabel}`;
+      document.getElementById('gamePhase').textContent = ({ write: 'Viết câu', draw: 'Vẽ câu', guess: 'Đoán hình', reveal: 'Kết quả' })[phase] || phase;
+      document.getElementById('gameTimer').textContent = phase === 'reveal' ? '✓' : `${Math.max(0, Math.ceil((gameState.deadline - Date.now()) / 1000))}s`;
+      const hasPhaseTask = phase === 'write' || gameState.phasePlayers.includes(myId);
+      textForm.hidden = !((phase === 'write' || phase === 'guess') && hasPhaseTask && !myGameSubmitted);
+      drawingButton.hidden = !(phase === 'draw' && gameState.phasePlayers.includes(myId) && !myGameSubmitted);
+      results.hidden = phase !== 'reveal';
+
+      if (phase === 'write') {
+        task.textContent = 'Viết một câu ngắn, vui hoặc bất ngờ. Câu sẽ được chuyền cho người khác vẽ.';
+        document.getElementById('gameTextInput').placeholder = 'Viết câu mở đầu (tối đa 160 ký tự)';
+      } else if (phase === 'draw') {
+        const assignment = gameState.assignments[myId];
+        task.textContent = assignment
+          ? `Hãy vẽ câu của ${assignment.sourcePlayer}: “${assignment.text}” trên bảng bên phải, rồi bấm Gửi hình vẽ.`
+          : 'Lượt này bạn được bỏ qua vì không có câu mới để vẽ. Đang chờ người chơi khác.';
+      } else if (phase === 'guess') {
+        task.textContent = gameState.assignments[myId]
+          ? 'Đoán hình đang hiện trên bảng bên phải.'
+          : 'Lượt này bạn không có hình cần đoán. Đang chờ người chơi khác.';
+        document.getElementById('gameTextInput').placeholder = 'Bạn nghĩ hình này là gì?';
+      } else if (phase === 'reveal') {
+        task.textContent = 'Xem câu ban đầu, hình vẽ và câu đoán của từng chuỗi.';
+        renderGameResults(results);
+      }
+    }
+
+    function submitGameText(event) {
+      event.preventDefault();
+      if (!gameState || myGameSubmitted || !['write', 'guess'].includes(gameState.phase)) return;
+      if (gameState.phase === 'guess' && !gameState.phasePlayers.includes(myId)) return;
+      if (!client.connected) {
+        document.getElementById('gameStatus').textContent = 'Mất kết nối. Đang chờ kết nối lại trước khi gửi.';
+        return;
+      }
+      const text = document.getElementById('gameTextInput').value.trim().slice(0, 160);
+      if (!text) return;
+      const submittedPhase = gameState.phase;
+      const kind = gameState.phase === 'write' ? 'prompt' : 'guess';
+      const answer = { type: 'game_answer', gameId: gameState.gameId, kind, text, sender: myId };
+      myGameSubmitted = true;
+      recordGameAnswer(answer);
+      publishGameMessage(answer);
+      renderGameUI(gameState.phase);
+      if (gameState.phase === submittedPhase) document.getElementById('gameStatus').textContent = 'Đã gửi. Đang chờ những người còn lại...';
+    }
+
+    function submitGameDrawing() {
+      if (!gameState || gameState.phase !== 'draw' || !gameState.phasePlayers.includes(myId) || myGameSubmitted) return;
+      if (!client.connected) {
+        document.getElementById('gameStatus').textContent = 'Mất kết nối. Đang chờ kết nối lại trước khi gửi.';
+        return;
+      }
+      const submittedPhase = gameState.phase;
+      const answer = { type: 'game_answer', gameId: gameState.gameId, kind: 'drawing', strokes: myGameStrokes, sender: myId };
+      myGameSubmitted = true;
+      recordGameAnswer(answer);
+      publishGameMessage(answer);
+      renderGameUI(gameState.phase);
+      if (gameState.phase === submittedPhase) document.getElementById('gameStatus').textContent = 'Đã gửi hình. Đang chờ những người còn lại...';
+    }
+
+    function renderGameResults(container) {
+      container.replaceChildren();
+      const players = gameState.players;
+      Object.keys(gameState.prompts).forEach(promptOwner => {
+        const drawers = players.filter(id => gameState.drawingSources[id] === promptOwner);
+        drawers.forEach(drawer => {
+          const drawerIndex = players.indexOf(drawer);
+          const guesser = players[(drawerIndex + 1) % players.length];
+          const card = document.createElement('article');
+          card.className = 'game-result';
+          const prompt = document.createElement('p');
+          prompt.textContent = `💬 ${promptOwner} viết: “${gameState.prompts[promptOwner]}”`;
+          const miniCanvas = document.createElement('canvas');
+          miniCanvas.width = 240;
+          miniCanvas.height = 144;
+          const drawing = document.createElement('p');
+          drawing.textContent = `🎨 ${drawer} vẽ:`;
+          const guess = document.createElement('p');
+          guess.textContent = `🤔 ${guesser} đoán: “${gameState.guesses[guesser] || '(trống)'}”`;
+          card.append(prompt, drawing, miniCanvas, guess);
+          container.appendChild(card);
+          drawGameOnMiniCanvas(miniCanvas, gameState.drawings[drawer] || []);
+        });
+      });
+    }
+
+    function resetGame(message) {
+      gameState = null;
+      myGameStrokes = [];
+      myGameSubmitted = false;
+      document.getElementById('gamePanel').hidden = true;
+      document.getElementById('startGameButton').disabled = false;
+      document.getElementById('startGameButton').textContent = 'Bắt đầu thử thách';
+      document.getElementById('gameStatus').textContent = message || 'Cần ít nhất 3 người trong phòng để bắt đầu.';
+    }
+
+    function handleGameMessage(message) {
+      if (message.type === 'game_start') {
+        acceptGameStart(message);
+      } else if (message.type === 'game_cancel') {
+        if (gameState && message.gameId === gameState.gameId && message.sender === gameState.hostId) resetGame(message.reason || 'Ván đã kết thúc. Bảng vẽ đã mở lại.');
+      } else if (message.type === 'game_answer') {
+        recordGameAnswer(message);
+      } else if (message.type === 'game_phase') {
+        if (!gameState && message.phase !== 'reveal') return;
+        applyGamePhase(message);
+      }
+    }
+
+    setInterval(() => {
+      if (!gameState || !gameState.deadline || gameState.phase === 'reveal') return;
+      const secondsLeft = Math.max(0, Math.ceil((gameState.deadline - Date.now()) / 1000));
+      document.getElementById('gameTimer').textContent = `${secondsLeft}s`;
+      if (secondsLeft === 0 && myId === gameState.hostId) advanceGamePhase();
+    }, 500);
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeChat();
+    });
+
+    const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', { clientId: myId });
+
+    client.on('connect', () => {
+      logNet(`Đã kết nối tới MQTT Broker trong phòng riêng ${roomId.slice(0, 8)}.`);
+      document.getElementById('connStatus').textContent = 'Đã kết nối';
+      document.getElementById('connStatus').className = 'badge badge-green';
+
+      client.subscribe([topicName, presenceTopic, chatTopic, gameTopic], (err) => {
+        if (!err) {
+          logNet(`Đã Subscribe vào các Topic chính và chat phòng.`);
+          document.getElementById('chatStatus').textContent = 'Đã kết nối chat.';
+        }
+      });
+
+      setInterval(() => {
+        client.publish(presenceTopic, JSON.stringify({ id: myId, status: 'Active' }));
+      }, 3000);
+    });
+
+    client.on('message', (topic, payload) => {
+      try {
+        const data = JSON.parse(payload.toString());
+
+        if (topic === gameTopic) {
+          handleGameMessage(data);
+        } else if (topic === chatTopic) {
+          if (data.type === 'chat' && data.sender !== myId) appendChatMessage(data);
+        } else if (topic === presenceTopic) {
+          if (data.id && data.id !== myId) {
+            activeClients.set(data.id, { id: data.id, status: 'Trực tuyến', lastSeen: Date.now() });
+            updateClientListUI();
+          }
+        } else if (topic === topicName) {
+          if (gameState && gameState.phase !== 'reveal') return;
+          if (data.sender === myId) return;
+
+          if (data.type === 'draw') {
+            drawLine(data.x1, data.y1, data.x2, data.y2, data.color, data.size);
+            logNet(`[${data.sender}] Vẽ nét x(${Math.round(data.x1)}->${Math.round(data.x2)})`);
+          } else if (data.type === 'clear') {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            logNet(`[${data.sender}] Xóa sạch bảng`);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    });
+
+    function getCursorPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      let clientX, clientY;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    function startPosition(e) {
+      e.preventDefault();
+      if (gameState && !['draw', 'reveal'].includes(gameState.phase)) return;
+      if (gameState?.phase === 'draw' && !gameState.phasePlayers.includes(myId)) return;
+      if (gameState?.phase === 'draw' && myGameSubmitted) return;
+      painting = true;
+      const pos = getCursorPos(e);
+      lastX = pos.x;
+      lastY = pos.y;
+    }
+
+    function drawPosition(e) {
+      if (!painting) return;
+      e.preventDefault();
+      const pos = getCursorPos(e);
+      const currentX = pos.x;
+      const currentY = pos.y;
+      const size = document.getElementById('brushSize').value;
+
+      drawLine(lastX, lastY, currentX, currentY, currentColor, size);
+
+      if (gameState?.phase === 'draw') {
+        if (!myGameSubmitted && myGameStrokes.length < maxGameStrokes) {
+          myGameStrokes.push({ x1: lastX, y1: lastY, x2: currentX, y2: currentY, color: currentColor, size: Number(size) });
+        }
+      } else if (client.connected) {
+        const packet = JSON.stringify({
+          sender: myId,
+          type: 'draw',
+          x1: lastX, y1: lastY,
+          x2: currentX, y2: currentY,
+          color: currentColor,
+          size: size
+        });
+        client.publish(topicName, packet);
+      }
+
+      lastX = currentX;
+      lastY = currentY;
+    }
+
+    function endPosition(e) {
+      if (!painting) return;
+      painting = false;
+    }
+
+    canvas.addEventListener('mousedown', startPosition);
+    canvas.addEventListener('mousemove', drawPosition);
+    canvas.addEventListener('mouseup', endPosition);
+    canvas.addEventListener('mouseleave', endPosition);
+
+    canvas.addEventListener('touchstart', startPosition, { passive: false });
+    canvas.addEventListener('touchmove', drawPosition, { passive: false });
+    canvas.addEventListener('touchend', endPosition);
+
+    function drawLine(x1, y1, x2, y2, color, size) {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.closePath();
+    }
+
+    function setColor(color, element) {
+      currentColor = color;
+      document.querySelectorAll('.color-btn').forEach(btn => btn.classList.remove('active'));
+      element.classList.add('active');
+    }
+
+    function clearBoard() {
+      if (gameState && gameState.phase !== 'reveal') {
+        if (gameState.phase === 'draw' && !myGameSubmitted) myGameStrokes = [];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (client.connected) {
+        client.publish(topicName, JSON.stringify({ sender: myId, type: 'clear' }));
+      }
+      logNet('Bạn đã gửi lệnh xóa toàn bộ bảng vẽ.');
+    }
+
+    setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      activeClients.forEach((client, id) => {
+        if (id !== myId && now - client.lastSeen > 8000) {
+          activeClients.delete(id);
+          changed = true;
+        }
+      });
+      if (changed) updateClientListUI();
+      if (gameState && gameState.phase !== 'reveal' && gameState.hostId !== myId && !activeClients.has(gameState.hostId)) {
+        resetGame('Host đã mất kết nối. Bảng vẽ tự mở lại để tiếp tục vẽ tự do.');
+      }
+    }, 4000);
+// ===== MỞ RỘNG: CHỌN MÀU VÀ CỤC TẨY =====
+
+const ERASER_COLOR = "__eraser__";
+let savedPenColor = currentColor;
+
+// Giữ lại hàm gốc.
+const originalSetColor = setColor;
+const originalDrawLine = drawLine;
+
+function updateDrawingToolUI(isErasing) {
+  const penButton = document.getElementById("penToolButton");
+  const eraserButton = document.getElementById("eraserToolButton");
+  const status = document.getElementById("drawingToolStatus");
+
+  penButton.style.outline = isErasing ? "none" : "2px solid white";
+  eraserButton.style.outline = isErasing ? "2px solid white" : "none";
+
+  status.textContent = isErasing
+    ? "Đang dùng: Cục tẩy — chỉnh kích thước bằng thanh Độ dày"
+    : "Đang dùng: Bút vẽ";
+
+  canvas.style.cursor = isErasing ? "cell" : "crosshair";
+}
+
+// Chọn màu có sẵn cũng tự chuyển về bút vẽ.
+setColor = function (color, element) {
+  document.getElementById("customPenColor")
+    .classList.remove("active");
+
+  originalSetColor(color, element);
+
+  savedPenColor = color;
+  document.getElementById("customPenColor").value = color;
+
+  updateDrawingToolUI(false);
+};
+
+// Chọn màu bất kỳ.
+function chooseCustomColor(color) {
+  setColor(color, document.getElementById("customPenColor"));
+}
+
+// Bật cục tẩy.
+function useEraserTool() {
+  currentColor = ERASER_COLOR;
+  updateDrawingToolUI(true);
+}
+
+// Bật bút, khôi phục màu đã chọn.
+function usePenTool() {
+  currentColor = savedPenColor;
+  updateDrawingToolUI(false);
+}
+
+// Xử lý cả nét vẽ tại máy này và nét nhận qua MQTT.
+drawLine = function (x1, y1, x2, y2, color, size) {
+  ctx.save();
+
+  try {
+    if (color === ERASER_COLOR) {
+      ctx.globalCompositeOperation = "destination-out";
+      originalDrawLine(x1, y1, x2, y2, "#000000", size);
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      originalDrawLine(x1, y1, x2, y2, color, size);
+    }
+  } finally {
+    ctx.restore();
+  }
+};
+
+// Sửa tọa độ khi kích thước hiển thị khác kích thước canvas.
+getCursorPos = function (e) {
+  const rect = canvas.getBoundingClientRect();
+  const point = e.touches && e.touches.length > 0
+    ? e.touches[0]
+    : e;
+
+  return {
+    x: (point.clientX - rect.left) * (canvas.width / rect.width),
+    y: (point.clientY - rect.top) * (canvas.height / rect.height)
+  };
+};
+
+// Đồng bộ trạng thái ban đầu với màu đen của bản gốc.
+const initialColorButton =
+  document.querySelector(".color-picker .color-btn.active");
+
+if (initialColorButton) {
+  setColor("#0f172a", initialColorButton);
+}
+    window.onload = () => {
+      startUnicastAnim();
+      startBroadcastAnim();
+      startMulticastAnim();
+      updateClientListUI();
+    };
+  </script>
+</body>
+</html>

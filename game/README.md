@@ -43,3 +43,12 @@ Nếu tạo Web Service bằng công cụ/API không có trường Root Director
 Triển khai từ nhánh `main`; cập nhật nhánh sẽ tự triển khai lại. Client tự dùng `wss://` khi trang được mở bằng HTTPS.
 
 Chạy một instance vì phòng đang lưu trong bộ nhớ. Server ngủ/khởi động lại/triển khai mới sẽ làm mất các phòng. Gói Free có cold start sau thời gian không dùng. Không mở rộng nhiều instance trước khi bổ sung kho trạng thái dùng chung.
+
+
+## GitHub Pages
+
+Trang gốc `index.html` là giao diện game được tạo từ `game/public/index.html` bằng `node game/scripts/build-pages.mjs`. CSS và JS dùng đường dẫn tương đối, chạy được dưới đường dẫn repo `/L-p-tr-nh-m-ng/`. Khi sửa HTML giao diện, chạy lại script trước khi commit.
+
+GitHub Pages đọc nhánh `main`, thư mục gốc. Trang này kết nối HTTP/WSS tới `https://truyen-net.onrender.com` qua meta `game-api-origin`. Link mời vẫn trỏ về trang GitHub Pages đang mở. Server chỉ cho phép thêm origin chính xác `https://phamdangkhiem4994-lang.github.io` qua biến `ALLOWED_ORIGINS` (phân cách bằng dấu phẩy nếu cần nhiều origin).
+
+Trang whiteboard trước đây được giữ tại `whiteboard_lab.html`.
