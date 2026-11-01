@@ -100,6 +100,15 @@ function render() {
     });
     root.querySelector('#undo').addEventListener('click',()=>pad.undo());
     root.querySelector('#redo').addEventListener('click',()=>pad.redo());
+    const shortcuts=event=>{
+      if(!(event.ctrlKey||event.metaKey)||event.altKey||event.target.closest('input,textarea,select,[contenteditable]'))return;
+      const key=event.key.toLowerCase();
+      if(key!=='z'&&key!=='y')return;
+      event.preventDefault();
+      if(key==='y'||event.shiftKey)pad.redo();else pad.undo();
+    };
+    document.addEventListener('keydown',shortcuts);
+    cleanups.push(()=>document.removeEventListener('keydown',shortcuts));
     root.querySelector('#clear').addEventListener('click',()=>{if(!pending&&confirm('Xóa toàn bộ nét vẽ ở lượt này?'))pad.clear();});
     root.querySelector('#submit-answer').addEventListener('click',()=>submit('drawing'));
   }
