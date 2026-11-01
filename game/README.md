@@ -32,3 +32,14 @@ Link mời/QR dùng địa chỉ đang mở; để chơi từ điện thoại, m
 Đặc tả nền tảng cũ trong `docs/superpowers/specs/2026-11-01-game-foundation-design.md` mô tả luật vẽ tiếp sức trước đây; luật ở trên thay thế phần đó.
 
 Trạng thái phòng chỉ lưu trong bộ nhớ server, khởi động lại sẽ mất phòng.
+
+
+## Triển khai Render
+
+Repo có `render.yaml` ở gốc: Node.js 22, gói Free, Singapore, thư mục `game`, kiểm tra `/api/health`.
+Build chạy `npm install --omit=dev && npm test`; start chạy `npm start`. Server đọc cổng từ `PORT` do Render cấp và lắng nghe `0.0.0.0`.
+
+Nếu tạo Web Service bằng công cụ/API không có trường Root Directory, dùng build `npm --prefix game install --omit=dev && npm --prefix game test` và start `npm --prefix game start`.
+Triển khai từ nhánh `main`; cập nhật nhánh sẽ tự triển khai lại. Client tự dùng `wss://` khi trang được mở bằng HTTPS.
+
+Chạy một instance vì phòng đang lưu trong bộ nhớ. Server ngủ/khởi động lại/triển khai mới sẽ làm mất các phòng. Gói Free có cold start sau thời gian không dùng. Không mở rộng nhiều instance trước khi bổ sung kho trạng thái dùng chung.
