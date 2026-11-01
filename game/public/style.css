@@ -26,3 +26,6 @@ input:not([type=range]){border-radius:11px;background:#fff;border-color:#ded4e7}
 @media(max-width:1050px){.entry-panel{padding:24px}.lobby-layout{gap:28px}}
 @media(max-width:650px){.entry-panel{padding:24px 20px;margin-top:32px;border:1px solid #e5dbee}.room-heading{padding:16px;gap:10px}.room-code{font-size:23px}.room-code span{display:block;text-align:left;margin:4px 0 0}.room-meta{white-space:nowrap}.roster{padding:20px}.lobby-layout>.roster{padding-top:20px}.tools{padding:12px}.timer{padding:9px 11px}.answer-comparison{padding:18px}.how>div{padding:16px}.header-actions .online{padding:5px 8px}.progress li{min-width:95px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
+
+/* Keep the expanded palette comfortable on small drawing workspaces. */
+.colors{flex-wrap:wrap;row-gap:10px}.swatch{flex-shrink:0}
