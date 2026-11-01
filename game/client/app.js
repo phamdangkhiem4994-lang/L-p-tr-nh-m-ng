@@ -61,7 +61,7 @@ function connect() {
   });
 }
 function receive(next) {
-  const key=`${next.phase}:${next.gameId}:${next.turnId}:${next.task?.kind??'waiting'}`;
+  const key=`${next.phase}:${next.gameId}:${next.turnId}:${next.task?.kind??'waiting'}:${next.submitted}`;
   const changed=key!==currentKey;
   if(snapshot && snapshot.gameId!==next.gameId)drafts.clear();
   snapshot=next;
@@ -79,6 +79,7 @@ function render() {
   });
   mountInvite(root,snapshot.roomCode,toast);
   root.querySelector('#start')?.addEventListener('click',()=>send({type:'game.start'}));
+  root.querySelector('#reveal-next')?.addEventListener('click',()=>send({type:'reveal.next',gameId:snapshot.gameId,revealCount:snapshot.result.revealCount}));
   root.querySelector('#restart')?.addEventListener('click',()=>send({type:'game.restart'}));
   if(snapshot.phase==='reveal'){cleanups.push(mountResults(root,snapshot));return;}
   const task=snapshot.task;
@@ -122,7 +123,7 @@ function render() {
     const key=`guess:${snapshot.gameId}:${snapshot.turnId}`;
     guess.value=drafts.get(key)??'';
     guess.addEventListener('input',()=>{drafts.set(key,guess.value);updateControls();});
-    root.querySelector('#guess-form').addEventListener('submit',event=>{event.preventDefault();submit('guess');});
+    root.querySelector('#guess-form').addEventListener('submit',event=>{event.preventDefault();submit('text');});
   }
 }
 function submit(kind) {
@@ -137,6 +138,14 @@ function submit(kind) {
 function updateControls() {
   const ready=connected&&snapshot?.players.length>=3&&snapshot.players.every(p=>p.online);
   for(const id of ['start','restart']){const button=root.querySelector(`#${id}`);if(button)button.disabled=!ready;}
+  const roundStatus=root.querySelector('#round-status');
+  const submitted=new Set(snapshot?.submittedPlayerIds??[]);
+  if(roundStatus)roundStatus.textContent=`Đã nộp ${submitted.size}/${snapshot.orderedPlayerIds.length} người · Mọi người làm bài cùng lúc`;
+  root.querySelectorAll('[data-player]').forEach(row=>{
+    const done=submitted.has(row.dataset.player);
+    row.classList.toggle('done',done);row.querySelector('span').textContent=done?'✓':'○';
+    row.querySelector('small').textContent=done?'Đã nộp':'Đang làm bài';
+  });
   const submitButton=root.querySelector('#submit-answer');
   if(submitButton)submitButton.disabled=!connected||pending||(pad?!pad.hasInk():!root.querySelector('#guess')?.value.trim());
   if(pad) {
@@ -153,7 +162,7 @@ function updateClock() {
   clock.textContent=remaining;clock.parentElement.classList.toggle('urgent',remaining<=10);
 }
 leaveButton.addEventListener('click',()=>{
-  if(snapshot&&['drawing','guessing'].includes(snapshot.phase)&&!confirm('Rời phòng khi đang chơi? Lượt của bạn vẫn sẽ tính giờ.'))return;
+  if(snapshot&&['writing','drawing','guessing'].includes(snapshot.phase)&&!confirm('Rời phòng khi đang chơi? Lượt của bạn vẫn sẽ tính giờ.'))return;
   try{connection?.send({type:'session.leave'});}catch{}
   reset();
 });

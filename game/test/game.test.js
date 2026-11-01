@@ -1,100 +1,76 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GameStore } from '../server/game.js';
-
-const strokes = [{color:'#123456',size:4,points:[{x:0.2,y:0.3},{x:0.8,y:0.7}]}];
+const strokes=[{color:'#522d60',size:5,points:[{x:.2,y:.3}]}];
 function setup(n=3) {
-  let now=1000;
-  const store=new GameStore({now:()=>now,chooseWord:()=> 'Mèo đi học'});
-  const a=store.create('A');
-  const sessions=[a];
-  for(let i=1;i<n;i++)sessions.push(store.join(a.roomCode,String.fromCharCode(65+i)));
-  for(const s of sessions)store.setOnline(s.roomCode,s.playerId,true);
-  const snapshot=(i)=>store.snapshot(a.roomCode,sessions[i].playerId);
-  const submit=(i,kind,extra={})=>{
-    const s=snapshot(i);
-    store.command(a.roomCode,sessions[i].playerId,{type:'answer.submit',gameId:s.gameId,turnId:s.turnId,kind,...extra});
-  };
-  return {store,sessions,a,snapshot,submit,setNow:v=>now=v};
+ let now=1000;const store=new GameStore({now:()=>now});const a=store.create('A');const sessions=[a];
+ for(let i=1;i<n;i++)sessions.push(store.join(a.roomCode,String.fromCharCode(65+i)));
+ for(const s of sessions)store.setOnline(s.roomCode,s.playerId,true);
+ const snap=i=>store.snapshot(a.roomCode,sessions[i].playerId);
+ const cmd=(i,m)=>store.command(a.roomCode,sessions[i].playerId,m);
+ const submit=(i,extra={})=>{const s=snap(i);cmd(i,{type:'answer.submit',gameId:s.gameId,turnId:s.turnId,kind:s.phase==='drawing'?'drawing':'text',...(s.phase==='drawing'?{strokes}:{text:`câu-${i}-${s.turnIndex}`}),...extra});};
+ cmd(0,{type:'game.start'});return {store,a,sessions,snap,cmd,submit,time:v=>now=v};
 }
-test('three players relay A drawing -> B redraw -> C final guess, then rotate roles',()=>{
-  const {store,a,sessions,snapshot,submit}=setup();
-  store.command(a.roomCode,a.playerId,{type:'game.start'});
-  assert.equal(snapshot(0).task.keyword,'Mèo đi học');
-  assert.equal(snapshot(1).task,null);
-  assert.equal(snapshot(2).result,undefined);
-  submit(0,'drawing',{strokes});
-  assert.equal(snapshot(1).task.kind,'redraw');
-  assert.deepEqual(snapshot(1).task.referenceDrawing.strokes,strokes);
-  assert.equal(snapshot(1).task.keyword,undefined);
-  assert.equal(snapshot(0).task,null);
-  submit(1,'drawing',{strokes});
-  assert.equal(snapshot(2).phase,'guessing');
-  assert.equal(snapshot(2).task.kind,'final_guess');
-  assert.equal(snapshot(2).task.referenceDrawing.playerId,sessions[1].playerId);
-  submit(2,'guess',{text:'Con mèo đi học'});
-  const result=snapshot(0).result;
-  assert.equal(result.keyword,'Mèo đi học');
-  assert.equal(result.finalGuess,'Con mèo đi học');
-  assert.deepEqual(result.drawings.map(x=>x.playerId),sessions.slice(0,2).map(x=>x.playerId));
-  for(let round=1;round<=2;round++){
-    store.command(a.roomCode,a.playerId,{type:'game.restart'});
-    assert.equal(snapshot(round).task.kind,'first_draw');
-    submit(round,'drawing',{strokes});submit((round+1)%3,'drawing',{strokes});submit((round+2)%3,'guess',{text:'Mèo'});
+test('3–8 players each own a chain, alternate text/drawing and visit every chain once',()=>{
+ for(let n=3;n<=8;n++) {
+  const g=setup(n);
+  for(let round=0;round<n;round++) {
+   for(let i=0;i<n;i++){
+    const s=g.snap(i);assert.equal(s.turnIndex,round);assert.equal(s.task.kind,round===0?'prompt':round%2?'draw':'guess');
+    if(round%2)assert.equal(s.task.text,`câu-${(i-1+n)%n}-${round-1}`);
+    else if(round)assert.deepEqual(s.task.referenceDrawing.strokes,strokes);
+    g.submit(i);
+    if(i<n-1){assert.equal(g.snap(i).submitted,true);assert.equal(g.snap(i).task,null);assert.equal(g.snap(i).turnIndex,round);}
+   }
   }
+  const room=g.store.room(g.a.roomCode);assert.equal(room.phase,'reveal');
+  for(const c of room.game.chains){assert.equal(c.steps.length,n);assert.equal(new Set(c.steps.map(s=>s.playerId)).size,n);}
+  assert.deepEqual(g.snap(0).result.chains,[]);
+ }
 });
-test('4-8 people: only immediate predecessor reference, N-1 drawings, one final guess',()=>{
-  for(let n=4;n<=8;n++){
-    const {store,a,snapshot,submit,sessions}=setup(n);
-    store.command(a.roomCode,a.playerId,{type:'game.start'});
-    for(let i=0;i<n-1;i++){
-      const own=snapshot(i);
-      assert.equal(own.task.kind,i===0?'first_draw':'redraw');
-      if(i)assert.equal(own.task.referenceDrawing.playerId,sessions[i-1].playerId);
-      for(let j=0;j<n;j++)if(j!==i){assert.equal(snapshot(j).task,null);assert.equal(snapshot(j).result,undefined);}
-      submit(i,'drawing',{strokes});
-    }
-    assert.equal(snapshot(n-1).task.kind,'final_guess');submit(n-1,'guess',{text:'X'});
-    assert.equal(snapshot(0).result.drawings.length,n-1);
-  }
+test('only the predecessor reference is sent; reveal is host-controlled and incremental',()=>{
+ const g=setup();g.submit(0,{text:'bí mật A'});
+ assert.ok(!JSON.stringify(g.snap(1)).includes('bí mật A'));g.submit(1);g.submit(2);
+ assert.equal(g.snap(1).task.text,'bí mật A');assert.ok(!JSON.stringify(g.snap(2)).includes('bí mật A'));
+ for(let r=1;r<3;r++)for(let i=0;i<3;i++)g.submit(i);
+ let s=g.snap(0);assert.equal(s.result.revealCount,0);
+ assert.throws(()=>g.cmd(1,{type:'reveal.next',gameId:s.gameId,revealCount:0}));
+ assert.throws(()=>g.cmd(0,{type:'game.restart'}));
+ for(let k=0;k<9;k++) {
+  g.cmd(0,{type:'reveal.next',gameId:s.gameId,revealCount:k});
+  s=g.snap(0);assert.equal(s.result.chains.reduce((n,c)=>n+c.steps.length,0),k+1);
+  assert.throws(()=>g.cmd(0,{type:'reveal.next',gameId:s.gameId,revealCount:k}));
+ }
+ assert.equal(s.result.finished,true);g.cmd(0,{type:'game.restart'});assert.equal(g.snap(0).phase,'writing');
 });
-test('permissions, wrong type, stale turn, duplicate and invalid drawings are rejected',()=>{
-  const {store,a,sessions,snapshot,submit}=setup();
-  assert.throws(()=>store.command(a.roomCode,sessions[1].playerId,{type:'game.start'}),/chủ phòng/i);
-  store.command(a.roomCode,a.playerId,{type:'game.start'});
-  assert.throws(()=>store.join(a.roomCode,'Late'),/đang chơi/i);
-  assert.throws(()=>submit(1,'drawing',{strokes}),/lượt/i);
-  assert.throws(()=>submit(0,'guess',{text:'X'}),/loại/i);
-  assert.throws(()=>submit(0,'drawing',{strokes:[]}),/tranh/i);
-  assert.throws(()=>submit(0,'drawing',{strokes:[{...strokes[0],points:[{x:NaN,y:0}]}]}),/tọa độ/i);
-  const old=snapshot(0);
-  submit(0,'drawing',{strokes});
-  assert.throws(()=>store.command(a.roomCode,a.playerId,{type:'answer.submit',gameId:old.gameId,turnId:old.turnId,kind:'drawing',strokes}),/lượt/i);
-  assert.equal(snapshot(1).task.kind,'redraw');
-  assert.throws(()=>store.command(a.roomCode,a.playerId,{type:'game.restart'}),/kết thúc/i);
+test('wrong types, duplicate/stale submissions and invalid drawings are rejected',()=>{
+ const g=setup();const first=g.snap(0);
+ assert.throws(()=>g.submit(0,{kind:'drawing',strokes}));assert.throws(()=>g.submit(0,{text:' '}));
+ g.submit(0);assert.throws(()=>g.submit(0));g.submit(1);g.submit(2);
+ assert.throws(()=>g.submit(0,{turnId:first.turnId}));
+ assert.throws(()=>g.submit(0,{strokes:[{color:'red',size:5,points:[]}]}));
+ assert.equal(g.snap(0).submitted,false);
 });
-test('timeouts interrupt missing drawings, never skip predecessor; guess timeout reveals without answer',()=>{
-  const first=setup();first.store.command(first.a.roomCode,first.a.playerId,{type:'game.start'});
-  first.submit(0,'drawing',{strokes});first.setNow(61000);first.store.tick();
-  assert.equal(first.snapshot(0).result.status,'interrupted');
-  assert.equal(first.snapshot(0).result.drawings.length,1);
-  assert.equal(first.snapshot(0).result.finalGuess,null);
-  const last=setup();last.store.command(last.a.roomCode,last.a.playerId,{type:'game.start'});
-  last.submit(0,'drawing',{strokes});last.submit(1,'drawing',{strokes});
-  last.setNow(31000);assert.throws(()=>last.submit(2,'guess',{text:'late'}),/hết giờ/i);
-  assert.equal(last.snapshot(0).result.status,'completed');assert.equal(last.snapshot(0).result.finalGuess,null);
+test('timeouts insert missing steps, preserve chains and allow later rounds',()=>{
+ const g=setup();g.submit(0);g.time(g.snap(0).deadline);g.store.tick();
+ assert.equal(g.snap(0).phase,'drawing');assert.equal(g.snap(0).task.referenceMissing,true);
+ assert.equal(g.snap(1).task.referenceMissing,false);
+ g.time(g.snap(0).deadline);g.store.tick();assert.equal(g.snap(0).phase,'guessing');
+ assert.equal(g.snap(0).task.referenceMissing,true);g.time(g.snap(0).deadline);g.store.tick();
+ assert.equal(g.snap(0).phase,'reveal');assert.equal(g.store.room(g.a.roomCode).game.chains.every(c=>c.steps.length===3),true);
 });
-test('minimum, offline players, host transfer, authentication and reconnect preserve deadline',()=>{
-  const small=setup(2);assert.throws(()=>small.store.command(small.a.roomCode,small.a.playerId,{type:'game.start'}),/3/);
-  const {store,a,sessions,snapshot}=setup();
-  assert.equal(store.authenticate(a.roomCode,a.playerId,a.token),true);
-  assert.equal(store.authenticate(a.roomCode,a.playerId,'bad'),false);
-  store.setOnline(a.roomCode,sessions[1].playerId,false);
-  assert.throws(()=>store.command(a.roomCode,a.playerId,{type:'game.start'}),/kết nối/i);
-  store.setOnline(a.roomCode,sessions[1].playerId,true);
-  store.command(a.roomCode,a.playerId,{type:'game.start'});const deadline=snapshot(0).deadline;
-  store.setOnline(a.roomCode,a.playerId,false);store.setOnline(a.roomCode,a.playerId,true);
-  assert.equal(snapshot(0).deadline,deadline);assert.equal(snapshot(0).task.keyword,'Mèo đi học');
-  const lobby=setup();lobby.store.setOnline(lobby.a.roomCode,lobby.a.playerId,false);
-  assert.equal(lobby.snapshot(1).hostId,lobby.sessions[1].playerId);
+test('reconnect preserves assignments and submissions; host transfers during reveal',()=>{
+ const g=setup();g.submit(0);const before=g.snap(0);g.store.setOnline(g.a.roomCode,g.a.playerId,false);g.store.setOnline(g.a.roomCode,g.a.playerId,true);
+ assert.equal(g.snap(0).deadline,before.deadline);assert.equal(g.snap(0).submitted,true);
+ for(let i=1;i<3;i++)g.submit(i);for(let r=1;r<3;r++)for(let i=0;i<3;i++)g.submit(i);
+ g.store.setOnline(g.a.roomCode,g.a.playerId,false);assert.equal(g.snap(1).hostId,g.sessions[1].playerId);
+ g.cmd(1,{type:'reveal.next',gameId:g.snap(1).gameId,revealCount:0});g.store.leave(g.a.roomCode,g.a.playerId);
+ assert.equal(g.snap(1).result.chains[0].ownerName,'A');assert.equal(g.snap(1).result.chains[0].steps[0].authorName,'A');
+});
+test('minimum players, active join, unauthenticated command and expired rooms',()=>{
+ const store=new GameStore();const a=store.create('A');store.setOnline(a.roomCode,a.playerId,true);
+ assert.throws(()=>store.command(a.roomCode,a.playerId,{type:'game.start'}));
+ const g=setup();assert.throws(()=>g.store.join(g.a.roomCode,'Late'));
+ assert.equal(g.store.authenticate(g.a.roomCode,g.a.playerId,'wrong'),false);
+ g.store.setOnline(g.a.roomCode,g.a.playerId,false);assert.throws(()=>g.submit(0));
 });

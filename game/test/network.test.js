@@ -26,35 +26,38 @@ async function connect(url,session) {
   ws.send(JSON.stringify({type:'session.attach',...session}));
   return {ws,messages,wait,send:m=>ws.send(JSON.stringify(m)),snapshot:predicate=>wait(m=>m.type==='room.snapshot'&&predicate(m.snapshot)).then(m=>m.snapshot)};
 }
-test('real HTTP + three WebSocket clients complete relay, protect private payloads, rotate and resume',async t=>{
-  const {url}=await launch(t,{chooseWord:()=> 'Từ khóa riêng'});
-  const a=(await post(url,'/api/rooms',{name:'Khiêm'})).data;
-  const b=(await post(url,`/api/rooms/${a.roomCode}/join`,{name:'Bạn B'})).data;
-  const c=(await post(url,`/api/rooms/${a.roomCode}/join`,{name:'Bạn C'})).data;
-  const peers=[];for(const s of [a,b,c])peers.push(await connect(url,s));
-  t.after(()=>peers.forEach(p=>p.ws.terminate()));
-  await peers[0].snapshot(s=>s.players.length===3&&s.players.every(p=>p.online));
-  peers[0].send({type:'game.start'});
-  const first=await peers[0].snapshot(s=>s.task?.kind==='first_draw');
-  const hidden=await peers[1].snapshot(s=>s.phase==='drawing');
-  assert.equal(first.task.keyword,'Từ khóa riêng');assert.equal(hidden.task,null);
-  assert.ok(!JSON.stringify(peers[1].messages).includes('Từ khóa riêng'));
-  peers[0].send({type:'answer.submit',gameId:first.gameId,turnId:first.turnId,kind:'drawing',strokes});
-  const second=await peers[1].snapshot(s=>s.task?.kind==='redraw');
-  assert.deepEqual(second.task.referenceDrawing.strokes,strokes);
-  peers[1].send({type:'answer.submit',gameId:second.gameId,turnId:second.turnId,kind:'drawing',strokes});
-  const last=await peers[2].snapshot(s=>s.task?.kind==='final_guess');
-  assert.equal(last.task.referenceDrawing.playerId,b.playerId);
-  peers[2].send({type:'answer.submit',gameId:last.gameId,turnId:last.turnId,kind:'guess',text:'Đáp án của C'});
-  const reveal=await peers[0].snapshot(s=>s.phase==='reveal');
-  assert.equal(reveal.result.drawings.length,2);assert.equal(reveal.result.finalGuess,'Đáp án của C');
-  peers[0].send({type:'game.restart'});
-  const rotated=await peers[1].snapshot(s=>s.gameId!==first.gameId&&s.task?.kind==='first_draw');
-  assert.equal(rotated.activePlayerId,b.playerId);
-  const reconnect=await connect(url,b);peers.push(reconnect);
-  const resumed=await reconnect.snapshot(s=>s.gameId===rotated.gameId&&s.task?.kind==='first_draw');
-  assert.equal(resumed.deadline,rotated.deadline);
+test('three real clients play simultaneous chains and share a private step-by-step reveal',async t=>{
+ const {url}=await launch(t);
+ const a=(await post(url,'/api/rooms',{name:'A'})).data;
+ const sessions=[a];for(const name of ['B','C'])sessions.push((await post(url,`/api/rooms/${a.roomCode}/join`,{name})).data);
+ const peers=[];for(const session of sessions)peers.push(await connect(url,session));
+ t.after(()=>peers.forEach(p=>p.ws.terminate()));
+ await peers[0].snapshot(s=>s.players.length===3&&s.players.every(p=>p.online));
+ peers[0].send({type:'game.start'});
+ for(let round=0;round<3;round++) {
+  const snapshots=await Promise.all(peers.map(p=>p.snapshot(s=>s.turnIndex===round&&s.task)));
+  if(round===1){assert.equal(snapshots[1].task.text,'private-0');assert.equal(JSON.stringify(snapshots[2]).includes('private-0'),false);}
+  for(let i=0;i<3;i++) {
+   const s=snapshots[i];peers[i].send({type:'answer.submit',gameId:s.gameId,turnId:s.turnId,
+    kind:round%2?'drawing':'text',...(round%2?{strokes}:{text:round===0?`private-${i}`:`guess-${i}`})});
+  }
+ }
+ const reveal=await peers[0].snapshot(s=>s.phase==='reveal');assert.deepEqual(reveal.result.chains,[]);
+ peers[1].send({type:'reveal.next',gameId:reveal.gameId,revealCount:0});
+ await peers[1].wait(m=>m.type==='request.error');
+ for(let k=0;k<9;k++) {
+  peers[0].send({type:'reveal.next',gameId:reveal.gameId,revealCount:k});
+  const opened=await Promise.all(peers.map(p=>p.snapshot(s=>s.result?.revealCount===k+1)));
+  assert.deepEqual(opened[0].result,opened[1].result);assert.deepEqual(opened[1].result,opened[2].result);
+  assert.equal(opened[0].result.chains.reduce((n,c)=>n+c.steps.length,0),k+1);
+ }
+ peers[0].send({type:'game.restart'});
+ const restarted=await peers[1].snapshot(s=>s.phase==='writing'&&s.gameId!==reveal.gameId);
+ const resumed=await connect(url,sessions[1]);peers.push(resumed);
+ const state=await resumed.snapshot(s=>s.gameId===restarted.gameId);
+ assert.equal(state.deadline,restarted.deadline);assert.equal(state.task.kind,'prompt');
 });
+
 test('HTTP rejects unsafe inputs, protects server files and WebSocket auth',async t=>{
   const {url}=await launch(t);
   assert.equal((await post(url,'/api/rooms',{name:''})).status,400);

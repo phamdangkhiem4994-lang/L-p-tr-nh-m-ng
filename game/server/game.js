@@ -1,9 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chooseWord } from './words.js';
 
 export class GameError extends Error {}
 const fail = message => { throw new GameError(message); };
-const active = room => room.phase === 'drawing' || room.phase === 'guessing';
+const active = room => ['writing','drawing','guessing'].includes(room.phase);
 const cleanText = (value, max, label) => {
   if (typeof value !== 'string' || !value.trim() || [...value.trim()].length > max)
     fail(`${label} cần từ 1 đến ${max} ký tự.`);
@@ -28,8 +27,8 @@ export function validateDrawing(strokes) {
 }
 
 export class GameStore {
-  constructor({now = Date.now, chooseWord: wordPicker = chooseWord, drawMs = 60000, guessMs = 30000} = {}) {
-    this.now = now; this.chooseWord = wordPicker; this.drawMs = drawMs; this.guessMs = guessMs;
+  constructor({now = Date.now, drawMs = 60000, guessMs = 30000, writeMs = 30000} = {}) {
+    Object.assign(this, {now, drawMs, guessMs, writeMs});
     this.rooms = new Map();
   }
   room(code) {
@@ -63,7 +62,7 @@ export class GameStore {
     player.online = online;
     player.disconnectedAt = online ? null : this.now();
     room.touched = this.now();
-    if (!active(room)) this.transferHost(room);
+    this.transferHost(room);
   }
   transferHost(room) {
     if (!room.players.some(p=>p.id===room.hostId && p.online))
@@ -76,6 +75,11 @@ export class GameStore {
     this.transferHost(room);
     room.touched=this.now();
   }
+  chainFor(room, id) {
+    const index = room.order.indexOf(id), count = room.order.length;
+    if (index < 0) fail('Bạn không tham gia ván này.');
+    return room.game.chains[(index - room.game.round + count) % count];
+  }
   command(code,id,message) {
     const room = this.room(code), player = room.players.find(p=>p.id===id);
     if (!player?.online) fail('Bạn chưa kết nối với phòng.');
@@ -83,47 +87,59 @@ export class GameStore {
     if (message.type==='game.start' || message.type==='game.restart') {
       if (id!==room.hostId) fail('Chỉ chủ phòng được bắt đầu ván.');
       if (active(room)) fail('Hãy chờ ván hiện tại kết thúc.');
+      if (room.phase==='reveal' && room.game.revealCount < room.order.length ** 2)
+        fail('Hãy công bố hết các chuỗi trước khi mở ván mới.');
       if (room.players.length < 3) fail('Cần ít nhất 3 người để bắt đầu.');
       if (room.players.some(p=>!p.online)) fail('Hãy chờ tất cả người chơi kết nối lại.');
-      let order = room.order.filter(pid=>room.players.some(p=>p.id===pid));
-      order.push(...room.players.filter(p=>!order.includes(p.id)).map(p=>p.id));
-      if (room.game) order.push(order.shift());
-      room.order = order;
-      room.game = {id:randomUUID(),keyword:this.chooseWord(),turnIndex:0,turnId:randomUUID(),
-        deadline:this.now()+this.drawMs,drawings:[],finalGuess:null,status:null,reason:null};
-      room.phase = 'drawing'; return;
+      room.order = room.players.map(p=>p.id);
+      room.game = {id:randomUUID(),round:0,turnId:randomUUID(),deadline:this.now()+this.writeMs,
+        chains:room.order.map(ownerId=>({ownerId,ownerName:room.players.find(p=>p.id===ownerId).name,steps:[]})),revealCount:0};
+      room.phase = 'writing'; return;
+    }
+    const game = room.game;
+    if (message.type==='reveal.next') {
+      if (id!==room.hostId) fail('Chỉ chủ phòng được công bố kết quả.');
+      if (room.phase!=='reveal' || message.gameId!==game?.id || message.revealCount!==game.revealCount)
+        fail('Bước công bố đã thay đổi.');
+      if (game.revealCount>=room.order.length ** 2) fail('Đã công bố hết các chuỗi.');
+      game.revealCount++; return;
     }
     if (message.type!=='answer.submit') fail('Lệnh không hợp lệ.');
-    const game=room.game;
     if (!active(room) || !game || message.gameId!==game.id || message.turnId!==game.turnId)
-      fail('Lượt đã kết thúc hoặc bài đã được nộp.');
-    if (this.now()>=game.deadline) {this.expire(room);fail('Lượt đã hết giờ.');}
-    if (room.order[game.turnIndex]!==id) fail('Chưa đến lượt của bạn.');
-    if (room.phase==='drawing') {
-      if (message.kind!=='drawing') fail('Sai loại bài: lượt này cần tranh vẽ.');
-      const drawing={playerId:id,turnIndex:game.turnIndex,strokes:validateDrawing(message.strokes)};
-      game.drawings.push(drawing);game.turnIndex++;game.turnId=randomUUID();
-      room.phase = game.turnIndex === room.order.length-1 ? 'guessing' : 'drawing';
-      game.deadline = this.now()+(room.phase==='drawing'?this.drawMs:this.guessMs);
-    } else {
-      if (message.kind!=='guess') fail('Sai loại bài: lượt này cần đáp án.');
-      game.finalGuess=cleanText(message.text,160,'Đáp án');
-      this.reveal(room,'completed',null);
-    }
+      fail('Vòng đã kết thúc hoặc bài đã được nộp.');
+    if (this.now()>=game.deadline) {this.expire(room);fail('Vòng đã hết giờ.');}
+    const chain = this.chainFor(room,id);
+    if (chain.steps[game.round]) fail('Bạn đã nộp bài ở vòng này.');
+    const kind = room.phase==='drawing' ? 'drawing' : 'text';
+    if (message.kind!==kind) fail(kind==='drawing'?'Vòng này cần tranh vẽ.':'Vòng này cần một câu bằng chữ.');
+    chain.steps.push({playerId:id,authorName:player.name,kind,round:game.round,skipped:false,
+      ...(kind==='drawing'?{strokes:validateDrawing(message.strokes)}:{text:cleanText(message.text,160,'Câu mô tả')})});
+    if (game.chains.every(c=>c.steps.length>game.round)) this.advance(room);
   }
-  reveal(room,status,reason) {
-    room.phase='reveal';room.game.status=status;room.game.reason=reason;room.game.deadline=0;
-    room.touched=this.now();this.transferHost(room);
+  advance(room) {
+    const game = room.game;
+    if (game.round===room.order.length-1) {
+      room.phase='reveal'; game.deadline=0; game.revealCount=0;
+      this.transferHost(room); return;
+    }
+    game.round++; game.turnId=randomUUID();
+    room.phase=game.round%2?'drawing':'guessing';
+    game.deadline=this.now()+(room.phase==='drawing'?this.drawMs:this.guessMs);
   }
   expire(room) {
-    this.reveal(room,room.phase==='drawing'?'interrupted':'completed',
-      room.phase==='drawing'?'Hết giờ vẽ, chưa có tranh để truyền tiếp.':'Không kịp đoán.');
+    const game=room.game, kind=room.phase==='drawing'?'drawing':'text';
+    for (const id of room.order) {
+      const chain=this.chainFor(room,id);
+      if (!chain.steps[game.round]) chain.steps.push({playerId:id,authorName:room.players.find(p=>p.id===id)?.name,kind,round:game.round,skipped:true});
+    }
+    this.advance(room); room.touched=this.now();
   }
   tick() {
     const changed=[];
     for (const [code,room] of this.rooms) {
       if (active(room) && this.now()>=room.game.deadline) {this.expire(room);changed.push(code);}
-      if (!active(room)) {
+      // Keep the cast while revealing so author names and host controls survive reconnects.
+      if (room.phase==='lobby') {
         const before=room.players.length;
         room.players=room.players.filter(p=>p.online || this.now()-(p.disconnectedAt??this.now())<120000);
         if (room.players.length!==before) {this.transferHost(room);changed.push(code);}
@@ -135,20 +151,28 @@ export class GameStore {
   snapshot(code,id) {
     const room=this.room(code), game=room.game;
     if (!room.players.some(p=>p.id===id)) fail('Bạn không ở trong phòng.');
-    const current=active(room)?room.order[game.turnIndex]:null;
-    let task=null;
-    if (current===id) task=game.turnIndex===0?{kind:'first_draw',keyword:game.keyword}:
-      {kind:room.phase==='guessing'?'final_guess':'redraw',referenceDrawing:structuredClone(game.drawings.at(-1))};
+    let task=null,submitted=false;
+    if (active(room) && room.order.includes(id)) {
+      const chain=this.chainFor(room,id); submitted=Boolean(chain.steps[game.round]);
+      if (!submitted) {
+        const previous=chain.steps[game.round-1];
+        task=game.round===0?{kind:'prompt'}:room.phase==='drawing'
+          ?{kind:'draw',text:previous?.text??null,referenceMissing:Boolean(previous?.skipped)}
+          :{kind:'guess',referenceDrawing:previous?.skipped?null:{strokes:structuredClone(previous.strokes)},referenceMissing:Boolean(previous?.skipped)};
+      }
+    }
     const snapshot={roomCode:room.code,players:room.players.map(({id,name,online})=>({id,name,online})),
       hostId:room.hostId,phase:room.phase,gameId:game?.id??null,orderedPlayerIds:[...room.order],
-      activePlayerId:current,turnIndex:game?.turnIndex??0,totalTurns:room.order.length,deadline:game?.deadline??0,
-      completedTurnCount:game?game.drawings.length+(game.finalGuess!==null?1:0):0,turnId:game?.turnId??null,task};
+      turnIndex:game?.round??0,totalTurns:room.order.length,deadline:game?.deadline??0,
+      turnId:game?.turnId??null,submitted,task,
+      submittedPlayerIds:active(room)?room.order.filter(pid=>this.chainFor(room,pid).steps[game.round]):[]};
     if (room.phase==='reveal') {
-      const next=room.order.filter(pid=>room.players.some(p=>p.id===pid));
-      next.push(...room.players.filter(p=>!next.includes(p.id)).map(p=>p.id));
-      if(next.length)next.push(next.shift());
-      snapshot.result={keyword:game.keyword,drawings:structuredClone(game.drawings),finalGuess:game.finalGuess,
-        guesserId:room.order.at(-1),status:game.status,reason:game.reason,nextPlayerIds:next};
+      const count=room.order.length;
+      snapshot.result={revealCount:game.revealCount,totalSteps:count*count,totalChains:count,
+        finished:game.revealCount===count*count,
+        chains:game.chains.map((chain,index)=>({ownerId:chain.ownerId,ownerName:chain.ownerName,
+          steps:structuredClone(chain.steps.slice(0,Math.max(0,Math.min(count,game.revealCount-index*count))))}))
+          .filter(chain=>chain.steps.length)};
     }
     return snapshot;
   }
