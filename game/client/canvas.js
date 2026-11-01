@@ -27,6 +27,7 @@ export function observeDrawing(canvas, strokes) {
 export class DrawingPad {
   constructor(canvas, strokes = [], onChange = () => {}) {
     Object.assign(this, { canvas, strokes, onChange, color: '#302c38', size: 5, locked: false, pointer: null });
+    this.inkColor = this.color;
     this.abort = new AbortController();
     const options = { signal: this.abort.signal };
     canvas.addEventListener('pointerdown', event => this.down(event), options);
@@ -60,6 +61,8 @@ export class DrawingPad {
     this.pointer = null; this.onChange(this.strokes);
   }
   finish() { this.pointer = null; this.onChange(this.strokes); }
+  selectColor(color) { this.inkColor = color; this.color = color; }
+  toggleEraser() { this.color = this.color === '#ffffff' ? this.inkColor : '#ffffff'; }
   undo() { if (!this.locked) { this.finish(); this.strokes.pop(); this.render(); this.onChange(this.strokes); } }
   clear() { if (!this.locked) { this.finish(); this.strokes.length = 0; this.render(); this.onChange(this.strokes); } }
   hasInk() { return this.strokes.some(stroke => stroke.color.toLowerCase() !== '#ffffff' && stroke.points.length); }

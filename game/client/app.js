@@ -87,14 +87,14 @@ function render() {
     pad=new DrawingPad(drawing,drafts.get(key),()=>updateControls());
     root.querySelectorAll('[data-color]').forEach(button=>button.addEventListener('click',()=>{
       if(pending)return;
-      pad.color=button.dataset.color;
+      pad.selectColor(button.dataset.color);
       root.querySelectorAll('[data-color]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
       root.querySelector('#eraser').setAttribute('aria-pressed','false');
     }));
     root.querySelector('#brush-size').addEventListener('input',event=>{pad.size=Number(event.target.value);root.querySelector('#brush-value').value=pad.size;});
     root.querySelector('#eraser').addEventListener('click',()=>{
       if(pending)return;
-      pad.color=pad.color==='#ffffff'?'#302c38':'#ffffff';
+      pad.toggleEraser();
       root.querySelector('#eraser').setAttribute('aria-pressed',String(pad.color==='#ffffff'));
       root.querySelectorAll('[data-color]').forEach(b=>{const selected=b.dataset.color===pad.color;b.classList.toggle('selected',selected);b.setAttribute('aria-pressed',String(selected));});
     });
