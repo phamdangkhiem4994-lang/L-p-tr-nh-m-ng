@@ -53,7 +53,13 @@ export function attachRealtime(server,store,{sameOrigin}) {
           ws.identity=null;ws.close(1000);broadcast(code);return;
         }
         if(sessions.get(key(code,ws.identity.playerId))!==ws)throw new GameError('Phiên này đã được mở ở nơi khác.');
-        store.command(code,ws.identity.playerId,message);broadcast(code);
+        store.command(code,ws.identity.playerId,message);
+        if (message.type==='room.kick') {
+          const targetKey=key(code,message.playerId), target=sessions.get(targetKey);
+          sessions.delete(targetKey);
+          if (target) {target.identity=null;target.close(4003,'Removed by room host');}
+        }
+        broadcast(code);
       } catch(error) {
         if(!(error instanceof GameError))console.error('Game request failed:',error);
         send(ws,{type:'request.error',error:error instanceof GameError?error.message:'Server gặp lỗi, vui lòng thử lại.'});

@@ -9,7 +9,7 @@ function setup(n=3) {
  const snap=i=>store.snapshot(a.roomCode,sessions[i].playerId);
  const cmd=(i,m)=>store.command(a.roomCode,sessions[i].playerId,m);
  const submit=(i,extra={})=>{const s=snap(i);cmd(i,{type:'answer.submit',gameId:s.gameId,turnId:s.turnId,kind:s.phase==='drawing'?'drawing':'text',...(s.phase==='drawing'?{strokes}:{text:`câu-${i}-${s.turnIndex}`}),...extra});};
- cmd(0,{type:'game.start'});return {store,a,sessions,snap,cmd,submit,time:v=>now=v};
+ cmd(0,{type:'room.settings',turns:n});cmd(0,{type:'game.start'});return {store,a,sessions,snap,cmd,submit,time:v=>now=v};
 }
 test('3–8 players each own a chain, alternate text/drawing and visit every chain once',()=>{
  for(let n=3;n<=8;n++) {

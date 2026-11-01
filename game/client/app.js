@@ -54,8 +54,8 @@ function connect() {
     const labels={online:'● Đã kết nối',connecting:'Đang kết nối…',reconnecting:'Đang kết nối lại…',expired:'Phiên đã hết hạn',displaced:'Phiên đang mở ở cửa sổ khác'};
     connectionStatus.textContent=labels[status]??status;
     connectionStatus.classList.toggle('online',connected);
-    if(status==='expired'||status==='displaced') {
-      const text=status==='expired'?'Phòng hoặc phiên đã hết hạn. Hãy vào phòng lại.':'Phiên đã mở ở cửa sổ khác. Mỗi người dùng một tab riêng nhé.';
+    if(status==='expired'||status==='displaced'||status==='kicked') {
+      const text=status==='kicked'?'Chủ phòng đã đưa bạn ra khỏi phòng.':status==='expired'?'Phòng hoặc phiên đã hết hạn. Hãy vào phòng lại.':'Phiên đã mở ở cửa sổ khác. Mỗi người dùng một tab riêng nhé.';
       reset();toast(text);
     } else updateControls();
   });
@@ -78,8 +78,15 @@ function render() {
     catch {toast(`Mã phòng: ${snapshot.roomCode}`);}
   });
   mountInvite(root,snapshot.roomCode,toast);
+  root.querySelector('#round-count')?.addEventListener('change',event=>{
+    if(!send({type:'room.settings',turns:Number(event.target.value)}))event.target.value=String(snapshot.settings.turns);
+  });
+  root.querySelectorAll('[data-kick]').forEach(button=>button.addEventListener('click',()=>{
+    if(send({type:'room.kick',playerId:button.dataset.kick}))button.disabled=true;
+  }));
   root.querySelector('#start')?.addEventListener('click',()=>send({type:'game.start'}));
   root.querySelector('#reveal-next')?.addEventListener('click',()=>send({type:'reveal.next',gameId:snapshot.gameId,revealCount:snapshot.result.revealCount}));
+  root.querySelector('#back-lobby')?.addEventListener('click',()=>send({type:'room.lobby'}));
   root.querySelector('#restart')?.addEventListener('click',()=>send({type:'game.restart'}));
   if(snapshot.phase==='reveal'){cleanups.push(mountResults(root,snapshot));return;}
   const task=snapshot.task;

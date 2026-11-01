@@ -21,10 +21,12 @@ Link mời/QR dùng địa chỉ đang mở; để chơi từ điện thoại, m
 - Tất cả làm bài cùng lúc. Mỗi vòng, chuỗi chuyển sang người kế tiếp trong thứ tự phòng.
 - Vòng lẻ sau câu mở đầu: chỉ thấy câu ngay trước và vẽ trong 60 giây.
 - Vòng tiếp theo: chỉ thấy tranh ngay trước và viết câu đoán trong 30 giây. Cứ thế luân phiên.
-- Với N người, có N vòng và N chuỗi, mỗi chuỗi có N bước; mỗi người ghé mỗi chuỗi đúng một lần.
+- Chủ phòng chọn 3–8 lượt cho mỗi câu chuyện trong phòng chờ (mặc định 3). Với N người và T lượt, có N câu chuyện, mỗi câu chuyện có T bước. Nếu T > N, câu chuyện tiếp tục quay vòng.
 - Chuyển vòng khi mọi người nộp hoặc hết giờ. Bài bỏ lỡ được đánh dấu, người tiếp theo có thể tự nghĩ câu/hình mới.
 - Câu/hình đã nộp được giữ kín. Kết nối lại vẫn giữ bài đã nộp, chuỗi được giao và hạn giờ.
 - Kết thúc: chủ phòng mở từng bước (câu hoặc hình cùng tác giả), đồng bộ cho cả phòng. Bước chưa công bố không được gửi tới client.
+- Chủ phòng có thể đuổi người khác (cả online và offline) trong phòng chờ. Phiên của người bị đuổi bị thu hồi; họ cần vào lại bằng tên/mã phòng. Đây là đuổi khỏi phiên, không phải cấm vĩnh viễn.
+- Sau khi công bố đủ kết quả, chủ phòng có thể về phòng chờ để đổi số lượt hoặc loại người đã mất kết nối, hoặc chơi lại với cài đặt hiện tại.
 - Chỉ mở ván mới sau khi công bố đủ các chuỗi. Nếu chủ phòng mất kết nối, quyền được chuyển cho người đang trực tuyến.
 
 Đặc tả nền tảng cũ trong `docs/superpowers/specs/2026-11-01-game-foundation-design.md` mô tả luật vẽ tiếp sức trước đây; luật ở trên thay thế phần đó.

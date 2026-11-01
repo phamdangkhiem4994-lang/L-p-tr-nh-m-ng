@@ -70,3 +70,22 @@ test('HTTP rejects unsafe inputs, protects server files and WebSocket auth',asyn
   const error=await bad.wait(m=>m.type==='request.error');assert.match(error.error,/phiên/i);
   assert.equal(bad.messages.some(m=>m.type==='room.snapshot'),false);
 });
+test('lobby host kicks online and offline peers, revokes sessions and shares round settings',async t=>{
+ const {url}=await launch(t);const a=(await post(url,'/api/rooms',{name:'Host'})).data;
+ const users=[a];for(const name of ['B','C','D','E'])users.push((await post(url,`/api/rooms/${a.roomCode}/join`,{name})).data);
+ const peers=[];for(const u of users)peers.push(await connect(url,u));
+ t.after(()=>peers.forEach(p=>p.ws.terminate()));
+ await peers[0].snapshot(s=>s.players.length===5&&s.players.every(p=>p.online));
+ peers[1].send({type:'room.kick',playerId:users[2].playerId});
+ await peers[1].wait(m=>m.type==='request.error');
+ const closed=new Promise(resolve=>peers[4].ws.once('close',code=>resolve(code)));
+ peers[0].send({type:'room.kick',playerId:users[4].playerId});assert.equal(await closed,4003);
+ await peers[1].snapshot(s=>s.players.length===4&&!s.players.some(p=>p.id===users[4].playerId));
+ peers[3].ws.terminate();await peers[0].snapshot(s=>s.players.some(p=>p.id===users[3].playerId&&!p.online));
+ peers[0].send({type:'room.kick',playerId:users[3].playerId});await peers[0].snapshot(s=>s.players.length===3);
+ const removed=await connect(url,users[4]);peers.push(removed);await removed.wait(m=>m.type==='request.error');
+ assert.equal(removed.messages.some(m=>m.type==='room.snapshot'),false);
+ peers[0].send({type:'room.settings',turns:8});
+ await Promise.all(peers.slice(0,3).map(p=>p.snapshot(s=>s.settings.turns===8)));
+ peers[0].send({type:'game.start'});const s=await peers[2].snapshot(s=>s.phase==='writing');assert.equal(s.totalTurns,8);
+});

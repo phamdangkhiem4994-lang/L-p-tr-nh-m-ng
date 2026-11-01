@@ -47,9 +47,9 @@ export class Connection {
     socket.onclose = event => {
       clearTimeout(this.watchdog);
       if (this.stopped) return;
-      if (event.code === 4001 || event.code === 4002) {
+      if (event.code === 4001 || event.code === 4002 || event.code === 4003) {
         this.stopped = true;
-        this.onStatus(event.code === 4002 ? 'displaced' : 'expired');
+        this.onStatus(event.code === 4003 ? 'kicked' : event.code === 4002 ? 'displaced' : 'expired');
         return;
       }
       this.onStatus('reconnecting');
