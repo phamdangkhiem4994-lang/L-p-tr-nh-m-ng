@@ -3,7 +3,7 @@ import { invitedRoom, mountInvite } from './invite.js';
 import { Connection, enterRoom, readSession, saveSession } from './network.js';
 import { DrawingPad, observeDrawing } from './canvas.js';
 import { landing, lobby, game } from './views.js?v=sketchbook2';
-import { results, mountResults } from './results.js?v=focus1';
+import { results, mountResults } from './results.js?v=album2';
 
 const root=document.querySelector('#app');
 const notice=document.querySelector('#notice');

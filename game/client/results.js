@@ -1,59 +1,13 @@
 import { escapeHTML, playerName, roomHeader } from './views.js';
 import { observeDrawing } from './canvas.js';
-
-// Only the latest server-revealed step takes the shared stage.
-function focusedStep(chains) {
-  for (let ci = chains.length - 1; ci >= 0; ci--) {
-    const chain = chains[ci];
-    if (chain.steps.length) {
-      const si = chain.steps.length - 1;
-      return { chain, step: chain.steps[si], ci, si };
-    }
-  }
-  return null;
-}
-
-function stage(current, snapshot) {
-  const {chain, step, ci, si} = current;
-  const author = escapeHTML(step.authorName ?? playerName(snapshot, step.playerId));
-  const label = step.kind === 'drawing' ? 'Vẽ hình' : si === 0 ? 'Câu mở đầu' : 'Đoán bằng chữ';
-  const content = step.skipped
-    ? '<p class="interrupted focus-skipped">Đã bỏ lỡ lượt này.</p>'
-    : step.kind === 'text'
-      ? `<blockquote class="revealed-text focus-text">${escapeHTML(step.text)}</blockquote>`
-      : `<canvas data-chain="${ci}" data-step="${si}" role="img" aria-label="Tranh của ${author}"></canvas>`;
-  return `<section class="reveal-focus" aria-label="Bước đang công bố">
-    <p class="focus-story">Câu chuyện ${ci + 1}/${snapshot.result.totalChains} · ${escapeHTML(chain.ownerName ?? playerName(snapshot, chain.ownerId))}</p>
-    <figure class="reveal-step focus-step">
-      <figcaption><span class="step-number">${si + 1}</span><strong>${author}</strong><small>${label} · bước ${si + 1}/${snapshot.totalTurns}</small></figcaption>
-      ${content}
-    </figure>
-  </section>`;
-}
-
 export function results(snapshot, me) {
-  const result = snapshot.result;
-  if (!result) return '';
-  const host = snapshot.hostId === me;
-  const current = focusedStep(result.chains);
-  const nextLabel = !current ? 'Bắt đầu kể chuyện →'
-    : current.si === snapshot.totalTurns - 1 ? 'Câu chuyện tiếp theo →' : 'Người tiếp theo →';
-  return `<section class="room-shell reveal reveal-presentation">${roomHeader(snapshot)}
-    <div class="focus-heading"><p class="eyebrow">MỖI NGƯỜI MỘT NÉT · MỖI NÉT MỘT BẤT NGỜ</p><h1>Cùng xem câu chuyện!</h1></div>
-    <div class="reveal-controls"><p role="status">Bước ${result.revealCount}/${result.totalSteps} · ${result.totalChains} câu chuyện</p>
-      ${!result.finished ? host ? `<button class="button primary" id="reveal-next">${nextLabel}</button>`
-        : '<p class="waiting-note">Chờ chủ phòng chuyển sang người tiếp theo…</p>'
-        : '<strong>Đã kể hết mọi câu chuyện!</strong>'}
-    </div>
-    ${current ? stage(current, snapshot) : '<div class="wait-space"><h2>Giữ bí mật đến phút cuối.</h2><p class="muted">Mỗi lần chuyển, cả phòng cùng xem một câu hoặc một bức tranh thật to.</p></div>'}
-    ${result.finished ? `<div class="restart-row"><div><h2>Thêm một vòng bất ngờ?</h2><p class="muted">Mỗi người sẽ bắt đầu một câu chuyện mới.</p></div>
-      ${host ? '<div class="restart-actions"><button class="button secondary" id="back-lobby">Về phòng chờ</button><button class="button primary" id="restart">Chơi ván mới ↗</button></div>'
-        : '<p class="waiting-note">Chờ chủ phòng mở ván mới…</p>'}</div>` : ''}
-  </section>`;
+  const result=snapshot.result;
+  if(!result)return '';
+  const host=snapshot.hostId===me;
+  return `<section class="room-shell reveal single-story-reveal">${roomHeader(snapshot)}<p class="eyebrow">CÂU → HÌNH → CÂU</p><h1 class="section-title">Câu chuyện đã<br><em>đi đến đâu?</em></h1><div class="reveal-controls"><p role="status">Đã mở ${result.revealCount}/${result.totalSteps} bước · ${result.totalChains} lượt kể chuyện</p>${!result.finished?(host?'<button class="button primary" id="reveal-next">Mở bước tiếp theo →</button>':'<p class="waiting-note">Chờ chủ phòng mở bước tiếp theo…</p>'):'<strong>Đã mở hết mọi câu chuyện!</strong>'}</div>${!result.chains.length?'<div class="wait-space"><h2>Giữ bí mật đến phút cuối.</h2><p class="muted">Chủ phòng sẽ lần lượt mở câu, tranh và người thực hiện cho cả nhóm.</p></div>':result.chains.map((chain,ci)=>({chain,ci})).slice(-1).map(({chain,ci})=>`<section class="album single-album"><h2>Lượt kể chuyện ${ci+1} · ${escapeHTML(chain.ownerName??playerName(snapshot,chain.ownerId))}</h2><div class="reveal-chain">${chain.steps.map((step,si)=>`<figure class="reveal-step"><figcaption><span class="step-number">${si+1}</span><strong>${escapeHTML(step.authorName??playerName(snapshot,step.playerId))}</strong><small>${step.kind==='drawing'?'Vẽ hình':si===0?'Câu mở đầu':'Đoán bằng chữ'}</small></figcaption>${step.skipped?'<p class="interrupted">Đã bỏ lỡ lượt này.</p>':step.kind==='text'?`<blockquote class="revealed-text">${escapeHTML(step.text)}</blockquote>`:`<canvas data-chain="${ci}" data-step="${si}" role="img" aria-label="Tranh của ${escapeHTML(step.authorName??playerName(snapshot,step.playerId))}"></canvas>`}</figure>`).join('')}</div></section>`).join('')}${result.finished?`<div class="restart-row"><div><h2>Thêm một vòng bất ngờ?</h2><p class="muted">Mỗi người sẽ bắt đầu một câu chuyện mới.</p></div>${host?'<div class="restart-actions"><button class="button secondary" id="back-lobby">Về phòng chờ</button><button class="button primary" id="restart">Chơi ván mới ↗</button></div>':'<p class="waiting-note">Chờ chủ phòng mở ván mới…</p>'}</div>`:''}</section>`;
 }
-
-export function mountResults(root, snapshot) {
-  const cleanups = [...root.querySelectorAll('canvas[data-chain]')].map(canvas => observeDrawing(canvas,
+export function mountResults(root,snapshot) {
+  const cleanups=[...root.querySelectorAll('[data-chain]')].map(canvas=>observeDrawing(canvas,
     snapshot.result.chains[Number(canvas.dataset.chain)].steps[Number(canvas.dataset.step)].strokes));
-  return () => cleanups.forEach(cleanup => cleanup());
+  return ()=>cleanups.forEach(cleanup=>cleanup());
 }
